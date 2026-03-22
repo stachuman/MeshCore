@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Dispatcher.h>
+#include <helpers/DelayTuning.h>
 
 namespace mesh {
 
@@ -34,9 +35,14 @@ class Mesh : public Dispatcher {
   DispatcherAction forwardMultipartDirect(Packet* pkt);
 
 protected:
+  float _tx_delay_factor;
+  float _direct_tx_delay_factor;
+  float _rx_delay_base;
+
   DispatcherAction onRecvPacket(Packet* pkt) override;
 
   virtual uint32_t getCADFailRetryDelay() const override;
+  int calcRxDelay(float score, uint32_t air_time) const override;
 
   /**
    * \brief  Decide what to do with received packet, ie. discard, forward, or hold
@@ -165,8 +171,12 @@ protected:
   */
   virtual void onAckRecv(Packet* packet, uint32_t ack_crc) { }
 
+  /**
+   * Added default tx / direct tx factor / rx delay - later it will change according to number of neighbors
+   */
   Mesh(Radio& radio, MillisecondClock& ms, RNG& rng, RTCClock& rtc, PacketManager& mgr, MeshTables& tables)
-    : Dispatcher(radio, ms, mgr), _rng(&rng), _rtc(&rtc), _tables(&tables)
+    : Dispatcher(radio, ms, mgr), _rng(&rng), _rtc(&rtc), _tables(&tables),
+      _tx_delay_factor(1.0f), _direct_tx_delay_factor(0.4f), _rx_delay_base(2.0f) 
   {
   }
 
@@ -180,6 +190,9 @@ public:
 
   RNG* getRNG() const { return _rng; }
   RTCClock* getRTCClock() const { return _rtc; }
+
+  void setDelayFactors(float tx, float direct_tx, float rx_base);
+  void autoTuneByNeighborCount(int active_neighbor_count);
 
   Packet* createAdvert(const LocalIdentity& id, const uint8_t* app_data=NULL, size_t app_data_len=0);
   Packet* createDatagram(uint8_t type, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t len);

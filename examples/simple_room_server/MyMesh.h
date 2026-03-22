@@ -129,10 +129,7 @@ protected:
   void logTx(mesh::Packet* pkt, int len) override;
   void logTxFail(mesh::Packet* pkt, int len) override;
 
-  int calcRxDelay(float score, uint32_t air_time) const override;
   const char* getLogDateTime() override;
-  uint32_t getRetransmitDelay(const mesh::Packet* packet) override;
-  uint32_t getDirectRetransmitDelay(const mesh::Packet* packet) override;
 
   int getInterferenceThreshold() const override {
     return _prefs.interference_threshold;
@@ -205,4 +202,6 @@ public:
   void clearStats() override;
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
   void loop();
+
+  void onAutoTuneChanged() override;
 };

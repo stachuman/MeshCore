@@ -77,6 +77,7 @@ public:
   void saveIdentity(const mesh::LocalIdentity& new_id) override;
   void clearStats() override { }
   void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) override;
+  void onAutoTuneChanged() override;
 
   float getTelemValue(uint8_t channel, uint8_t type);
 
@@ -115,9 +116,6 @@ protected:
   // Mesh overrides
   float getAirtimeBudgetFactor() const override;
   bool allowPacketForward(const mesh::Packet* packet) override;
-  int calcRxDelay(float score, uint32_t air_time) const override;
-  uint32_t getRetransmitDelay(const mesh::Packet* packet) override;
-  uint32_t getDirectRetransmitDelay(const mesh::Packet* packet) override;
   int getInterferenceThreshold() const override;
   int getAGCResetInterval() const override;
   void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len) override;

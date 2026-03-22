@@ -59,6 +59,8 @@
 #define CLI_REPLY_DELAY_MILLIS      600
 
 #define LAZY_CONTACTS_WRITE_DELAY    5000
+#define NEIGHBOUR_ACTIVE_MAX_AGE    (7 * 24 * 3600)  // 7 days
+#define AUTOTUNE_INTERVAL_MILLIS    (5 * 60 * 1000)  // 5 minutes
 
 void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
 #if MAX_NEIGHBOURS // check if neighbours enabled
@@ -84,6 +86,7 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
   neighbour->advert_timestamp = timestamp;
   neighbour->heard_timestamp = getRTCClock()->getCurrentTime();
   neighbour->snr = (int8_t)(snr * 4);
+  recalcAutoTune();
 #endif
 }
 
@@ -518,18 +521,33 @@ void MyMesh::logTxFail(mesh::Packet *pkt, int len) {
   }
 }
 
-int MyMesh::calcRxDelay(float score, uint32_t air_time) const {
-  if (_prefs.rx_delay_base <= 0.0f) return 0;
-  return (int)((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
+int MyMesh::countActiveNeighbours() const {
+#if MAX_NEIGHBOURS
+  uint32_t now = getRTCClock()->getCurrentTime();
+  int count = 0;
+  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
+    if (neighbours[i].snr > 0
+        && neighbours[i].heard_timestamp != 0
+        && (now - neighbours[i].heard_timestamp) < NEIGHBOUR_ACTIVE_MAX_AGE) {
+      count++;
+    }
+  }
+  return count;
+#else
+  return 0;
+#endif
 }
 
-uint32_t MyMesh::getRetransmitDelay(const mesh::Packet *packet) {
-  uint32_t t = (_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * _prefs.tx_delay_factor);
-  return getRNG()->nextInt(0, 5*t + 1);
+void MyMesh::recalcAutoTune() {
+  if (_prefs.auto_tune_delays) {
+    autoTuneByNeighborCount(countActiveNeighbours());
+  } else {
+    setDelayFactors(_prefs.tx_delay_factor, _prefs.direct_tx_delay_factor, _prefs.rx_delay_base);
+  }
 }
-uint32_t MyMesh::getDirectRetransmitDelay(const mesh::Packet *packet) {
-  uint32_t t = (_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * _prefs.direct_tx_delay_factor);
-  return getRNG()->nextInt(0, 5*t + 1);
+
+void MyMesh::onAutoTuneChanged() {
+  recalcAutoTune();
 }
 
 bool MyMesh::filterRecvFloodPacket(mesh::Packet* pkt) {
@@ -845,6 +863,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   uptime_millis = 0;
   next_local_advert = next_flood_advert = 0;
   dirty_contacts_expiry = 0;
+  next_autotune = 0;
   set_radio_at = revert_radio_at = 0;
   _logging = false;
   region_load_active = false;
@@ -859,6 +878,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.rx_delay_base = 0.0f;   // turn off by default, was 10.0;
   _prefs.tx_delay_factor = 0.5f; // was 0.25f
   _prefs.direct_tx_delay_factor = 0.3f; // was 0.2
+  _prefs.auto_tune_delays = 1;   // on by default
   StrHelper::strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name));
   _prefs.node_lat = ADVERT_LAT;
   _prefs.node_lon = ADVERT_LON;
@@ -925,6 +945,8 @@ void MyMesh::begin(FILESYSTEM *fs) {
 
   updateAdvertTimer();
   updateFloodAdvertTimer();
+  recalcAutoTune();
+  next_autotune = futureMillis(AUTOTUNE_INTERVAL_MILLIS);
 
   board.setAdcMultiplier(_prefs.adc_multiplier);
 
@@ -1327,6 +1349,12 @@ void MyMesh::loop() {
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     acl.save(_fs);
     dirty_contacts_expiry = 0;
+  }
+
+  // periodic auto-tune recalc
+  if (next_autotune && millisHasNowPassed(next_autotune)) {
+    recalcAutoTune();
+    next_autotune = futureMillis(AUTOTUNE_INTERVAL_MILLIS);
   }
 
   // update uptime

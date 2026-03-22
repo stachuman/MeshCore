@@ -307,19 +307,6 @@ bool SensorMesh::allowPacketForward(const mesh::Packet* packet) {
   return true;
 }
 
-int SensorMesh::calcRxDelay(float score, uint32_t air_time) const {
-  if (_prefs.rx_delay_base <= 0.0f) return 0;
-  return (int) ((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
-}
-
-uint32_t SensorMesh::getRetransmitDelay(const mesh::Packet* packet) {
-  uint32_t t = (_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * _prefs.tx_delay_factor);
-  return getRNG()->nextInt(0, 6)*t;
-}
-uint32_t SensorMesh::getDirectRetransmitDelay(const mesh::Packet* packet) {
-  uint32_t t = (_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * _prefs.direct_tx_delay_factor);
-  return getRNG()->nextInt(0, 6)*t;
-}
 int SensorMesh::getInterferenceThreshold() const {
   return _prefs.interference_threshold;
 }
@@ -710,6 +697,7 @@ SensorMesh::SensorMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::Millise
   _prefs.rx_delay_base =   0.0f;  // turn off by default, was 10.0;
   _prefs.tx_delay_factor = 0.5f;   // was 0.25f
   _prefs.direct_tx_delay_factor = 0.2f; // was zero
+  _prefs.auto_tune_delays = 1;   // on by default
   StrHelper::strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name));
   _prefs.node_lat = ADVERT_LAT;
   _prefs.node_lon = ADVERT_LON;
@@ -744,12 +732,21 @@ void SensorMesh::begin(FILESYSTEM* fs) {
 
   updateAdvertTimer();
   updateFloodAdvertTimer();
+  onAutoTuneChanged();
 
    board.setAdcMultiplier(_prefs.adc_multiplier);
 
 #if ENV_INCLUDE_GPS == 1
   applyGpsPrefs();
 #endif
+}
+
+void SensorMesh::onAutoTuneChanged() {
+  if (_prefs.auto_tune_delays) {
+    autoTuneByNeighborCount(0);
+  } else {
+    setDelayFactors(_prefs.tx_delay_factor, _prefs.direct_tx_delay_factor, _prefs.rx_delay_base);
+  }
 }
 
 bool SensorMesh::formatFileSystem() {

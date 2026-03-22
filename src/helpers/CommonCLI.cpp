@@ -87,7 +87,8 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.read((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
     file.read((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));                          // 170
-    // next: 290
+    file.read((uint8_t *)&_prefs->auto_tune_delays, sizeof(_prefs->auto_tune_delays));           // 290
+    // next: 291
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -114,6 +115,7 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
 
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
+    _prefs->auto_tune_delays = constrain(_prefs->auto_tune_delays, 0, 1);
 
     // sanitise settings
     _prefs->rx_boosted_gain = constrain(_prefs->rx_boosted_gain, 0, 1); // boolean
@@ -177,7 +179,8 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.write((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
     file.write((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));                          // 170
-    // next: 290
+    file.write((uint8_t *)&_prefs->auto_tune_delays, sizeof(_prefs->auto_tune_delays));           // 290
+    // next: 291
 
     file.close();
   }
@@ -338,6 +341,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         sprintf(reply, "> %d", (uint32_t)_prefs->flood_max);
       } else if (memcmp(config, "direct.txdelay", 14) == 0) {
         sprintf(reply, "> %s", StrHelper::ftoa(_prefs->direct_tx_delay_factor));
+      } else if (memcmp(config, "autotune", 8) == 0) {
+        sprintf(reply, "> %s", _prefs->auto_tune_delays ? "on" : "off");
       } else if (memcmp(config, "owner.info", 10) == 0) {
         *reply++ = '>';
         *reply++ = ' ';
@@ -555,8 +560,10 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         float db = atof(&config[8]);
         if (db >= 0) {
           _prefs->rx_delay_base = db;
+          _prefs->auto_tune_delays = 0;
           savePrefs();
-          strcpy(reply, "OK");
+          _callbacks->onAutoTuneChanged();
+          strcpy(reply, "OK (autotune off)");
         } else {
           strcpy(reply, "Error, cannot be negative");
         }
@@ -564,8 +571,10 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         float f = atof(&config[8]);
         if (f >= 0) {
           _prefs->tx_delay_factor = f;
+          _prefs->auto_tune_delays = 0;
           savePrefs();
-          strcpy(reply, "OK");
+          _callbacks->onAutoTuneChanged();
+          strcpy(reply, "OK (autotune off)");
         } else {
           strcpy(reply, "Error, cannot be negative");
         }
@@ -582,8 +591,10 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         float f = atof(&config[15]);
         if (f >= 0) {
           _prefs->direct_tx_delay_factor = f;
+          _prefs->auto_tune_delays = 0;
           savePrefs();
-          strcpy(reply, "OK");
+          _callbacks->onAutoTuneChanged();
+          strcpy(reply, "OK (autotune off)");
         } else {
           strcpy(reply, "Error, cannot be negative");
         }
@@ -607,6 +618,16 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         } else {
           strcpy(reply, "Error, must be 0,1, or 2");
         }
+      } else if (memcmp(config, "autotune ", 9) == 0) {
+        config += 9;
+        if (memcmp(config, "on", 2) == 0 || *config == '1') {
+          _prefs->auto_tune_delays = 1;
+        } else {
+          _prefs->auto_tune_delays = 0;
+        }
+        savePrefs();
+        _callbacks->onAutoTuneChanged();
+        strcpy(reply, "OK");
       } else if (memcmp(config, "loop.detect ", 12) == 0) {
         config += 12;
         uint8_t mode;

@@ -1,5 +1,6 @@
 #include "Mesh.h"
 //#include <Arduino.h>
+#include <math.h>
 
 namespace mesh {
 
@@ -14,13 +15,28 @@ void Mesh::loop() {
 bool Mesh::allowPacketForward(const mesh::Packet* packet) { 
   return false;  // by default, Transport NOT enabled
 }
-uint32_t Mesh::getRetransmitDelay(const mesh::Packet* packet) { 
-  uint32_t t = (_radio->getEstAirtimeFor(packet->getRawLength()) * 52 / 50) / 2;
-
-  return _rng->nextInt(0, 5)*t;
+uint32_t Mesh::getRetransmitDelay(const mesh::Packet* packet) {
+  uint32_t t = (_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * _tx_delay_factor);
+  return _rng->nextInt(0, 5*t + 1);
 }
 uint32_t Mesh::getDirectRetransmitDelay(const Packet* packet) {
-  return 0;  // by default, no delay
+  uint32_t t = (_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * _direct_tx_delay_factor);
+  return _rng->nextInt(0, 5*t + 1);
+}
+int Mesh::calcRxDelay(float score, uint32_t air_time) const {
+  if (_rx_delay_base <= 0.0f) return 0;
+  return (int)((pow(_rx_delay_base, 0.85f - score) - 1.0) * air_time);
+}
+void Mesh::setDelayFactors(float tx, float direct_tx, float rx_base) {
+  _tx_delay_factor = tx;
+  _direct_tx_delay_factor = direct_tx;
+  _rx_delay_base = rx_base;
+}
+void Mesh::autoTuneByNeighborCount(int active_neighbor_count) {
+  const DelayTuning& t = getDelayTuning(active_neighbor_count);
+  _tx_delay_factor = t.tx_delay;
+  _direct_tx_delay_factor = t.direct_tx_delay;
+  _rx_delay_base = t.rx_delay_base;
 }
 uint8_t Mesh::getExtraAckTransmitCount() const {
   return 0;

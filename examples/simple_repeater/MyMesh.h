@@ -106,6 +106,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
   CayenneLPP telemetry;
+  unsigned long next_autotune;
   unsigned long set_radio_at, revert_radio_at;
   float pending_freq;
   float pending_bw;
@@ -119,6 +120,8 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
 #endif
 
   void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr);
+  int countActiveNeighbours() const;
+  void recalcAutoTune();
   void sendNodeDiscoverReq();
   uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
   uint8_t handleAnonRegionsReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data);
@@ -142,11 +145,6 @@ protected:
   void logRx(mesh::Packet* pkt, int len, float score) override;
   void logTx(mesh::Packet* pkt, int len) override;
   void logTxFail(mesh::Packet* pkt, int len) override;
-  int calcRxDelay(float score, uint32_t air_time) const override;
-
-  uint32_t getRetransmitDelay(const mesh::Packet* packet) override;
-  uint32_t getDirectRetransmitDelay(const mesh::Packet* packet) override;
-
   int getInterferenceThreshold() const override {
     return _prefs.interference_threshold;
   }
@@ -243,4 +241,6 @@ public:
 #if defined(USE_SX1262) || defined(USE_SX1268)
   void setRxBoostedGain(bool enable) override;
 #endif
+
+  void onAutoTuneChanged() override;
 };
