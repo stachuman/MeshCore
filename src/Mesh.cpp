@@ -36,7 +36,6 @@ void Mesh::autoTuneByNeighborCount(int active_neighbor_count) {
   const DelayTuning& t = getDelayTuning(active_neighbor_count);
   _tx_delay_factor = t.tx_delay;
   _direct_tx_delay_factor = t.direct_tx_delay;
-  _rx_delay_base = t.rx_delay_base;
 }
 uint8_t Mesh::getExtraAckTransmitCount() const {
   return 0;

@@ -747,7 +747,6 @@ void SensorMesh::onAutoTuneChanged() {
     const DelayTuning& t = getDelayTuning(0);
     _prefs.tx_delay_factor = t.tx_delay;
     _prefs.direct_tx_delay_factor = t.direct_tx_delay;
-    _prefs.rx_delay_base = t.rx_delay_base;
   } else {
     setDelayFactors(_prefs.tx_delay_factor, _prefs.direct_tx_delay_factor, _prefs.rx_delay_base);
   }
