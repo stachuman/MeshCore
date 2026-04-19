@@ -15,7 +15,7 @@
  * dense / very_dense topologies (max neighbor count = 24). Compared to the
  * legacy fixed defaults (tx=0.5, direct=0.3), the auto-tuned curve trades
  * a small amount of raw flood delivery for a large ACK-reliability gain in
- * congested topologies (see delay_optimization_v2/FINAL_PROPOSAL.md).
+ * congested topologies.
  *
  * Indices beyond DELAY_TUNING_TABLE_SIZE-1 clamp to the last entry.
  */
