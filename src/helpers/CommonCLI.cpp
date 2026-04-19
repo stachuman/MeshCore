@@ -88,7 +88,8 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
     file.read((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));                          // 170
     file.read((uint8_t *)&_prefs->rx_boosted_gain, sizeof(_prefs->rx_boosted_gain));              // 290
-    // next: 291
+    file.read((uint8_t *)&_prefs->auto_tune_delays, sizeof(_prefs->auto_tune_delays));            // 291
+    // next: 292
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -118,6 +119,7 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
 
     // sanitise settings
     _prefs->rx_boosted_gain = constrain(_prefs->rx_boosted_gain, 0, 1); // boolean
+    _prefs->auto_tune_delays = constrain(_prefs->auto_tune_delays, 0, 1); // boolean
 
     file.close();
   }
@@ -179,7 +181,8 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
     file.write((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));                          // 170
     file.write((uint8_t *)&_prefs->rx_boosted_gain, sizeof(_prefs->rx_boosted_gain));              // 290
-    // next: 291
+    file.write((uint8_t *)&_prefs->auto_tune_delays, sizeof(_prefs->auto_tune_delays));            // 291
+    // next: 292
 
     file.close();
   }
@@ -712,6 +715,11 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, char* command, char* rep
     savePrefs();
     strcpy(reply, "OK");
 #endif
+  } else if (memcmp(config, "auto.tune.delays ", 17) == 0) {
+    _prefs->auto_tune_delays = memcmp(&config[17], "on", 2) == 0;
+    savePrefs();
+    _callbacks->onAutoTuneChanged(_prefs->auto_tune_delays);
+    strcpy(reply, _prefs->auto_tune_delays ? "OK - auto.tune.delays is now ON" : "OK - auto.tune.delays is now OFF");
   } else if (memcmp(config, "adc.multiplier ", 15) == 0) {
     _prefs->adc_multiplier = atof(&config[15]);
     if (_board->setAdcMultiplier(_prefs->adc_multiplier)) {
@@ -804,6 +812,8 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, char* command, char* rep
     } else {
       strcpy(reply, "> strict");
     }
+  } else if (memcmp(config, "auto.tune.delays", 16) == 0) {
+    sprintf(reply, "> %s", _prefs->auto_tune_delays ? "on" : "off");
   } else if (memcmp(config, "tx", 2) == 0 && (config[2] == 0 || config[2] == ' ')) {
     sprintf(reply, "> %d", (int32_t) _prefs->tx_power_dbm);
   } else if (memcmp(config, "freq", 4) == 0) {

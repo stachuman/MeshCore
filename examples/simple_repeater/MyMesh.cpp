@@ -531,6 +531,31 @@ void MyMesh::logTxFail(mesh::Packet *pkt, int len) {
   }
 }
 
+int MyMesh::countActiveNeighbours() const {
+#if MAX_NEIGHBOURS
+  int count = 0;
+  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
+    if (neighbours[i].heard_timestamp > 0) count++;
+  }
+  return count;
+#else
+  return 0;
+#endif
+}
+
+void MyMesh::recalcAutoTune() {
+  if (!_prefs.auto_tune_delays) return;
+  const DelayTuning& t = lookupDelayTuning(countActiveNeighbours());
+  _prefs.tx_delay_factor = t.tx_delay_factor;
+  _prefs.direct_tx_delay_factor = t.direct_tx_delay_factor;
+}
+
+void MyMesh::onAutoTuneChanged(bool enable) {
+  if (enable) recalcAutoTune();
+  // if turning off we leave the last-applied factors in place; operator can
+  // `set txdelay` / `set direct.txdelay` explicitly to restore other values.
+}
+
 int MyMesh::calcRxDelay(float score, uint32_t air_time) const {
   if (_prefs.rx_delay_base <= 0.0f) return 0;
   return (int)((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
@@ -639,6 +664,7 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
     AdvertDataParser parser(app_data, app_data_len);
     if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) { // just keep neigbouring Repeaters
       putNeighbour(id, timestamp, packet->getSNR());
+      recalcAutoTune();
     }
   }
 }
@@ -874,6 +900,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.rx_delay_base = 0.0f;   // turn off by default, was 10.0;
   _prefs.tx_delay_factor = 0.5f; // was 0.25f
   _prefs.direct_tx_delay_factor = 0.3f; // was 0.2
+  _prefs.auto_tune_delays = 0;   // off by default; when enabled, tx/direct tx factors auto-follow neighbor count
   StrHelper::strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name));
   _prefs.node_lat = ADVERT_LAT;
   _prefs.node_lon = ADVERT_LON;
