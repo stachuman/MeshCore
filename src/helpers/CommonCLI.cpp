@@ -93,8 +93,9 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
-    _prefs->tx_delay_factor = constrain(_prefs->tx_delay_factor, 0, 2.0f);
-    _prefs->direct_tx_delay_factor = constrain(_prefs->direct_tx_delay_factor, 0, 2.0f);
+    // upper bound must accommodate DelayTuning.h auto-tune table (max ~87 tx, ~253 direct)
+    _prefs->tx_delay_factor = constrain(_prefs->tx_delay_factor, 0, 300.0f);
+    _prefs->direct_tx_delay_factor = constrain(_prefs->direct_tx_delay_factor, 0, 300.0f);
     _prefs->airtime_factor = constrain(_prefs->airtime_factor, 0, 9.0f);
     _prefs->freq = constrain(_prefs->freq, 150.0f, 2500.0f);
     _prefs->bw = constrain(_prefs->bw, 7.8f, 500.0f);
@@ -717,8 +718,8 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, char* command, char* rep
 #endif
   } else if (memcmp(config, "auto.tune.delays ", 17) == 0) {
     _prefs->auto_tune_delays = memcmp(&config[17], "on", 2) == 0;
-    savePrefs();
     _callbacks->onAutoTuneChanged(_prefs->auto_tune_delays);
+    savePrefs();
     strcpy(reply, _prefs->auto_tune_delays ? "OK - auto.tune.delays is now ON" : "OK - auto.tune.delays is now OFF");
   } else if (memcmp(config, "adc.multiplier ", 15) == 0) {
     _prefs->adc_multiplier = atof(&config[15]);

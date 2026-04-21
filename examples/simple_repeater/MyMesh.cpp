@@ -41,6 +41,14 @@
   #define TXT_ACK_DELAY 200
 #endif
 
+#ifndef DEFAULT_TX_DELAY_FACTOR
+  #define DEFAULT_TX_DELAY_FACTOR 0.5f
+#endif
+
+#ifndef DEFAULT_DIRECT_TX_DELAY_FACTOR
+  #define DEFAULT_DIRECT_TX_DELAY_FACTOR 0.3f
+#endif
+
 #define FIRMWARE_VER_LEVEL       2
 
 #define REQ_TYPE_GET_STATUS         0x01 // same as _GET_STATS
@@ -551,9 +559,12 @@ void MyMesh::recalcAutoTune() {
 }
 
 void MyMesh::onAutoTuneChanged(bool enable) {
-  if (enable) recalcAutoTune();
-  // if turning off we leave the last-applied factors in place; operator can
-  // `set txdelay` / `set direct.txdelay` explicitly to restore other values.
+  if (enable) {
+    recalcAutoTune();
+  } else {
+    _prefs.tx_delay_factor = DEFAULT_TX_DELAY_FACTOR;
+    _prefs.direct_tx_delay_factor = DEFAULT_DIRECT_TX_DELAY_FACTOR;
+  }
 }
 
 int MyMesh::calcRxDelay(float score, uint32_t air_time) const {
@@ -898,8 +909,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   memset(&_prefs, 0, sizeof(_prefs));
   _prefs.airtime_factor = 1.0;
   _prefs.rx_delay_base = 0.0f;   // turn off by default, was 10.0;
-  _prefs.tx_delay_factor = 0.5f; // was 0.25f
-  _prefs.direct_tx_delay_factor = 0.3f; // was 0.2
+  _prefs.tx_delay_factor = DEFAULT_TX_DELAY_FACTOR; // was 0.25f
+  _prefs.direct_tx_delay_factor = DEFAULT_DIRECT_TX_DELAY_FACTOR; // was 0.2
   _prefs.auto_tune_delays = 0;   // off by default; when enabled, tx/direct tx factors auto-follow neighbor count
   StrHelper::strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name));
   _prefs.node_lat = ADVERT_LAT;
