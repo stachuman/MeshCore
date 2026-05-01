@@ -81,6 +81,68 @@ TEST(test_observe_rejects_oversized_path) {
     assert(cache.size() == 0);   // dropped silently — too long for storage
 }
 
+TEST(test_lookup_empty_cache) {
+    RouteCache cache;
+    RouteEntry results[4];
+    int n = cache.lookup(/*dest_hash*/ 0xAA, /*hash_size*/ 1,
+                          /*exclude*/ nullptr, 0, results, 4, /*now*/ 1000);
+    assert(n == 0);
+}
+
+TEST(test_lookup_single_match) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path[1] = { 0x55 };
+    cache.observe(key, path, 1, 4, 1000);
+
+    RouteEntry results[4];
+    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 4, 1000);
+    assert(n == 1);
+    assert(memcmp(results[0].dest_pubkey, key, PUB_KEY_SIZE) == 0);
+    assert(results[0].path[0] == 0x55);
+}
+
+TEST(test_lookup_no_hash_match) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path[1] = { 0x55 };
+    cache.observe(key, path, 1, 4, 1000);
+
+    RouteEntry results[4];
+    int n = cache.lookup(/*dest_hash*/ 0xBB, 1, nullptr, 0, results, 4, 1000);
+    assert(n == 0);
+}
+
+TEST(test_lookup_multi_match_orders_by_recency) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path_a[2] = { 0x01, 0x02 };
+    uint8_t path_b[2] = { 0x01, 0x03 };
+
+    cache.observe(key, path_a, 2, 4, 1000);   // older
+    cache.observe(key, path_b, 2, 4, 2000);   // newer
+
+    RouteEntry results[4];
+    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 4, 2000);
+    assert(n == 2);
+    // With placeholder scoring (recency only), newer should be first.
+    assert(results[0].last_seen_secs == 2000);
+    assert(results[1].last_seen_secs == 1000);
+}
+
+TEST(test_lookup_respects_max_results) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    for (int i = 0; i < 5; i++) {
+        uint8_t path[1] = { (uint8_t)i };
+        cache.observe(key, path, 1, 4, 1000 + i);
+    }
+
+    RouteEntry results[2];
+    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 2, 1100);
+    assert(n == 2);
+}
+
 int main() {
     std::printf("test_routecache: %d test(s) registered\n", tests_run);
     if (tests_failed) {

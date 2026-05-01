@@ -41,15 +41,57 @@ void RouteCache::observe(const uint8_t* dest_pubkey, const uint8_t* path,
   memset(e._reserved, 0, sizeof(e._reserved));
 }
 
-int RouteCache::lookup(uint8_t /*dest_hash*/, uint8_t /*hash_size*/,
-                        const uint8_t* /*exclude_path*/, uint8_t /*exclude_path_len*/,
-                        RouteEntry* /*out_results*/, int /*max_results*/,
-                        uint32_t /*now_secs*/) {
-  return 0;  // TASK 5 fills this in.
+int RouteCache::lookup(uint8_t dest_hash, uint8_t hash_size,
+                        const uint8_t* exclude_path, uint8_t exclude_path_len,
+                        RouteEntry* out_results, int max_results, uint32_t now_secs) {
+  if (max_results <= 0 || out_results == nullptr) return 0;
+
+  // Two-pass: (1) collect candidate indexes, (2) sort by score and copy.
+  int candidates[ROUTE_CACHE_CAPACITY];
+  int n_cand = 0;
+
+  for (int i = 0; i < _used; i++) {
+    const RouteEntry& e = _entries[i];
+    // Hash prefix match against destination
+    if (memcmp(e.dest_pubkey, &dest_hash, hash_size) != 0) continue;
+
+    // Skip explicitly excluded path
+    if (exclude_path != nullptr && exclude_path_len > 0
+        && e.hop_count == exclude_path_len
+        && memcmp(e.path, exclude_path, exclude_path_len) == 0) {
+      continue;
+    }
+
+    candidates[n_cand++] = i;
+  }
+
+  // Selection sort by score descending.
+  int written = 0;
+  while (written < max_results && written < n_cand) {
+    int best_pos = written;
+    int32_t best_score = computeScore(_entries[candidates[written]], now_secs);
+    for (int j = written + 1; j < n_cand; j++) {
+      int32_t s = computeScore(_entries[candidates[j]], now_secs);
+      if (s > best_score) {
+        best_score = s;
+        best_pos = j;
+      }
+    }
+    if (best_pos != written) {
+      int tmp = candidates[written];
+      candidates[written] = candidates[best_pos];
+      candidates[best_pos] = tmp;
+    }
+    out_results[written] = _entries[candidates[written]];
+    written++;
+  }
+
+  return written;
 }
 
-int32_t RouteCache::computeScore(const RouteEntry& /*e*/, uint32_t /*now_secs*/) {
-  return 0;  // TASK 6 fills this in.
+int32_t RouteCache::computeScore(const RouteEntry& e, uint32_t /*now_secs*/) {
+  // Placeholder: order by recency. Real formula in Task 6.
+  return (int32_t)e.last_seen_secs;
 }
 
 void RouteCache::prune(uint32_t /*now_secs*/) {
