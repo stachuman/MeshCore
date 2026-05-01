@@ -1121,9 +1121,30 @@ void MyMesh::formatNeighborsReply(char *reply) {
 }
 
 void MyMesh::formatRoutesReply(char *reply) {
-  // Real implementation in Task 11; stub for now.
-  if (reply) {
-    snprintf(reply, 32, "routes: %d entries", route_cache.size());
+  if (!reply) return;
+  uint32_t now = getRTCClock()->getCurrentTime();
+  int n = route_cache.size();
+
+  int written = snprintf(reply, 64, "routes: %d entries\n", n);
+  if (n == 0) return;
+
+  // Show up to 8 entries to fit reply buffer (CLI replies are size-bounded).
+  const int MAX_SHOW = 8;
+  int show = (n < MAX_SHOW) ? n : MAX_SHOW;
+  for (int i = 0; i < show; i++) {
+    RouteEntry e;
+    if (!route_cache.getEntry(i, e)) break;
+
+    // Format: hash[2bytes] hops snr_dB age_sec
+    uint32_t age = (now >= e.last_seen_secs) ? (now - e.last_seen_secs) : 0;
+    int line_len = snprintf(&reply[written], 80,
+                             "%02X%02X h=%u snr=%d age=%us\n",
+                             e.dest_pubkey[0], e.dest_pubkey[1],
+                             (unsigned)e.hop_count,
+                             (int)(e.last_snr_x4 / 4),
+                             (unsigned)age);
+    if (line_len <= 0) break;
+    written += line_len;
   }
 }
 
