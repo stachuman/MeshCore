@@ -114,8 +114,25 @@ int32_t RouteCache::computeScore(const RouteEntry& e, uint32_t now_secs) {
   return snr_term + fresh_term + hop_term + stab_term;
 }
 
-void RouteCache::prune(uint32_t /*now_secs*/) {
-  // TASK 7 fills this in.
+void RouteCache::prune(uint32_t now_secs) {
+  // In-place compaction: keep only entries whose age <= _ttl_secs.
+  int write = 0;
+  for (int read = 0; read < _used; read++) {
+    uint32_t age = (now_secs >= _entries[read].last_seen_secs)
+        ? (now_secs - _entries[read].last_seen_secs)
+        : 0;
+    if (age <= _ttl_secs) {
+      if (write != read) {
+        _entries[write] = _entries[read];
+      }
+      write++;
+    }
+  }
+  // Zero out the now-unused tail so getEntry() can't accidentally read stale data.
+  if (write < _used) {
+    memset(&_entries[write], 0, sizeof(RouteEntry) * (_used - write));
+  }
+  _used = write;
 }
 
 void RouteCache::clear() {

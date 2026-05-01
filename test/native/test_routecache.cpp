@@ -238,6 +238,44 @@ TEST(test_score_n_seen_caps_at_10) {
     assert(RouteCache::computeScore(e1, 1000) == RouteCache::computeScore(e2, 1000));
 }
 
+TEST(test_prune_removes_expired) {
+    RouteCache cache(/*ttl_secs*/ 100);
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path[1] = { 0x01 };
+    cache.observe(key, path, 1, 4, 1000);
+    assert(cache.size() == 1);
+
+    cache.prune(/*now*/ 1101);
+    assert(cache.size() == 0);
+}
+
+TEST(test_prune_keeps_fresh) {
+    RouteCache cache(/*ttl_secs*/ 100);
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path[1] = { 0x01 };
+    cache.observe(key, path, 1, 4, 1000);
+
+    cache.prune(/*now*/ 1050);   // within TTL
+    assert(cache.size() == 1);
+}
+
+TEST(test_prune_compacts_entries) {
+    RouteCache cache(/*ttl_secs*/ 100);
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t p1[1] = { 0x01 };
+    uint8_t p2[1] = { 0x02 };
+    uint8_t p3[1] = { 0x03 };
+    cache.observe(key, p1, 1, 4, 900);   // will expire
+    cache.observe(key, p2, 1, 4, 1000);  // survives
+    cache.observe(key, p3, 1, 4, 950);   // will expire
+
+    cache.prune(/*now*/ 1080);   // ttl=100, so anything older than 980 expires
+    assert(cache.size() == 1);
+    RouteEntry e;
+    assert(cache.getEntry(0, e));
+    assert(e.path[0] == 0x02);   // only p2 survived; appears at index 0 after compaction
+}
+
 int main() {
     std::printf("test_routecache: %d test(s) registered\n", tests_run);
     if (tests_failed) {
