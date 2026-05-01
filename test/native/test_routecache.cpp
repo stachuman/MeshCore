@@ -323,6 +323,23 @@ TEST(test_eviction_at_capacity) {
     assert(found_marker);
 }
 
+#include "helpers/PathProtocol.h"
+
+TEST(test_path_protocol_constants_sane) {
+    // Subtypes are in the zero-hop range and don't collide with existing DISCOVER subtypes.
+    static_assert((CTL_TYPE_PATH_REQ & 0x80) != 0, "must be zero-hop CONTROL subtype");
+    static_assert((CTL_TYPE_PATH_OFFER & 0x80) != 0, "must be zero-hop CONTROL subtype");
+    static_assert(CTL_TYPE_PATH_REQ != 0x80, "collides with DISCOVER_REQ");
+    static_assert(CTL_TYPE_PATH_REQ != 0x90, "collides with DISCOVER_RESP");
+    static_assert(CTL_TYPE_PATH_OFFER != 0x80, "collides with DISCOVER_REQ");
+    static_assert(CTL_TYPE_PATH_OFFER != 0x90, "collides with DISCOVER_RESP");
+
+    // Wire-budget check vs MAX_PACKET_PAYLOAD=184
+    static_assert(PATH_REQ_MAX_BYTES <= 184, "PATH_REQ exceeds payload");
+    static_assert(PATH_OFFER_MAX_BYTES <= 184, "PATH_OFFER exceeds payload");
+    assert(true);
+}
+
 int main() {
     std::printf("test_routecache: %d test(s) registered\n", tests_run);
     if (tests_failed) {
