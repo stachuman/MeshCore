@@ -1,0 +1,60 @@
+#include "RouteCache.h"
+
+RouteCache::RouteCache(uint32_t ttl_secs) : _used(0), _ttl_secs(ttl_secs) {
+  memset(_entries, 0, sizeof(_entries));
+}
+
+void RouteCache::observe(const uint8_t* /*dest_pubkey*/, const uint8_t* /*path*/,
+                          uint8_t /*hop_count*/, int8_t /*snr_x4*/, uint32_t /*now_secs*/) {
+  // TASK 3 fills this in.
+}
+
+int RouteCache::lookup(uint8_t /*dest_hash*/, uint8_t /*hash_size*/,
+                        const uint8_t* /*exclude_path*/, uint8_t /*exclude_path_len*/,
+                        RouteEntry* /*out_results*/, int /*max_results*/,
+                        uint32_t /*now_secs*/) {
+  return 0;  // TASK 5 fills this in.
+}
+
+int32_t RouteCache::computeScore(const RouteEntry& /*e*/, uint32_t /*now_secs*/) {
+  return 0;  // TASK 6 fills this in.
+}
+
+void RouteCache::prune(uint32_t /*now_secs*/) {
+  // TASK 7 fills this in.
+}
+
+void RouteCache::clear() {
+  _used = 0;
+  memset(_entries, 0, sizeof(_entries));
+}
+
+bool RouteCache::getEntry(int idx, RouteEntry& out) const {
+  if (idx < 0 || idx >= _used) return false;
+  out = _entries[idx];
+  return true;
+}
+
+int RouteCache::findExact(const uint8_t* dest_pubkey, const uint8_t* path, uint8_t hop_count) const {
+  for (int i = 0; i < _used; i++) {
+    const RouteEntry& e = _entries[i];
+    if (memcmp(e.dest_pubkey, dest_pubkey, PUB_KEY_SIZE) != 0) continue;
+    if (e.hop_count != hop_count) continue;
+    if (hop_count > 0 && memcmp(e.path, path, hop_count) != 0) continue;
+    return i;
+  }
+  return -1;
+}
+
+int RouteCache::findOldest() const {
+  if (_used == 0) return -1;
+  int oldest_idx = 0;
+  uint32_t oldest_ts = _entries[0].last_seen_secs;
+  for (int i = 1; i < _used; i++) {
+    if (_entries[i].last_seen_secs < oldest_ts) {
+      oldest_ts = _entries[i].last_seen_secs;
+      oldest_idx = i;
+    }
+  }
+  return oldest_idx;
+}
