@@ -17,3 +17,8 @@ compile_commands.json
 .venv/
 venv/
 platformio.local.ini
+
+# Native test build outputs
+test/native/test_routecache_bin
+test/native/*_bin
+
