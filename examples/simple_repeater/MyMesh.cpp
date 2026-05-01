@@ -929,6 +929,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   pending_discover_tag = 0;
   pending_discover_until = 0;
 
+  _prefs.route_cache_ttl_secs = 1800;   // 30 min default
+
   memset(default_scope.key, 0, sizeof(default_scope.key));
 }
 
@@ -937,6 +939,7 @@ void MyMesh::begin(FILESYSTEM *fs) {
   _fs = fs;
   // load persisted prefs
   _cli.loadPrefs(_fs);
+  route_cache.setTTL(_prefs.route_cache_ttl_secs);
   acl.load(_fs, self_id);
   // TODO: key_store.begin();
   region_map.load(_fs);
