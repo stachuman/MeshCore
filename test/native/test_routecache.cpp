@@ -143,6 +143,49 @@ TEST(test_lookup_respects_max_results) {
     assert(n == 2);
 }
 
+TEST(test_lookup_excludes_matching_path) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path_a[2] = { 0x01, 0x02 };
+    uint8_t path_b[2] = { 0x01, 0x03 };
+    cache.observe(key, path_a, 2, 4, 1000);
+    cache.observe(key, path_b, 2, 4, 2000);
+
+    uint8_t exclude[2] = { 0x01, 0x03 };
+    RouteEntry results[4];
+    int n = cache.lookup(0xAA, 1, exclude, 2, results, 4, 2000);
+
+    assert(n == 1);
+    assert(results[0].path[1] == 0x02);   // path_a survived
+}
+
+TEST(test_lookup_exclude_no_match_returns_all) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path_a[2] = { 0x01, 0x02 };
+    cache.observe(key, path_a, 2, 4, 1000);
+
+    uint8_t exclude_other[2] = { 0xFF, 0xFF };
+    RouteEntry results[4];
+    int n = cache.lookup(0xAA, 1, exclude_other, 2, results, 4, 1000);
+
+    assert(n == 1);
+}
+
+TEST(test_lookup_exclude_different_length_no_match) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path_a[2] = { 0x01, 0x02 };
+    cache.observe(key, path_a, 2, 4, 1000);
+
+    // Exclude has same first 2 bytes but length differs — should not match.
+    uint8_t exclude_short[1] = { 0x01 };
+    RouteEntry results[4];
+    int n = cache.lookup(0xAA, 1, exclude_short, 1, results, 4, 1000);
+
+    assert(n == 1);
+}
+
 int main() {
     std::printf("test_routecache: %d test(s) registered\n", tests_run);
     if (tests_failed) {
