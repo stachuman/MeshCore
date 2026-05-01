@@ -71,6 +71,25 @@ class BaseChatMesh : public mesh::Mesh {
   uint8_t temp_buf[MAX_TRANS_UNIT];
   ConnectionInfo connections[MAX_CONNECTIONS];
 
+  // Phase 2 cold-start fix: in-flight PATH_REQ tracking (zero-hop neighborhood query).
+  // See spec §7.6 (with responder_hash addition).
+  static const int MAX_PENDING_QUERIES = 2;
+  struct PendingQuery {
+    bool     in_use;
+    uint32_t deadline_millis;       // futureMillis() value
+    uint8_t  query_id;
+    uint8_t  target_hash;
+    int      contact_idx;           // index into contacts[]
+    int16_t  best_score;            // -1 = no offer yet
+    uint8_t  best_responder_hash;
+    uint8_t  best_path_len;
+    uint8_t  best_path[16];         // matches PATH_OFFER_PATH_MAX
+    // Deferred-send state
+    mesh::Packet* deferred_pkt;     // owned; built by sender, sent on resolution
+    uint32_t pending_expected_ack;
+  };
+  PendingQuery _pending_queries[MAX_PENDING_QUERIES];
+
   mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char *text, uint32_t& expected_ack);
   void sendAckTo(const ContactInfo& dest, uint32_t ack_hash);
 
@@ -86,6 +105,7 @@ protected:
     txt_send_timeout = 0;
     _pendingLoopback = NULL;
     memset(connections, 0, sizeof(connections));
+    memset(_pending_queries, 0, sizeof(_pending_queries));
   }
 
   void bootstrapRTCfromContacts();
@@ -119,6 +139,14 @@ protected:
 
   virtual void sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis=0);
   virtual void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0);
+
+  // Phase 2 cold-start fix helpers
+  bool tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* pkt,
+                         uint32_t expected_ack);
+  void onPathOfferRecv(mesh::Packet* packet);
+  void checkPendingQueries();   // call from MyMesh::loop() periodically
+  PendingQuery* findPendingSlot();
+  PendingQuery* matchPending(uint8_t querier_hash, uint8_t query_id, uint8_t target_hash);
 
   // storage concepts, for sub-classes to override/implement
   virtual int  getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) { return 0; }  // not implemented

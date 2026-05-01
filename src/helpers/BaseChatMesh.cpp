@@ -943,3 +943,41 @@ void BaseChatMesh::loop() {
     _pendingLoopback = NULL;
   }
 }
+
+// === Phase 2 cold-start fix: pending PATH_REQ tracking ===
+
+BaseChatMesh::PendingQuery* BaseChatMesh::findPendingSlot() {
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
+    if (!_pending_queries[i].in_use) return &_pending_queries[i];
+  }
+  return nullptr;
+}
+
+BaseChatMesh::PendingQuery* BaseChatMesh::matchPending(uint8_t querier_hash,
+                                                       uint8_t query_id,
+                                                       uint8_t target_hash) {
+  // Phase 2 querier hash should equal our own first pubkey byte
+  if (querier_hash != self_id.pub_key[0]) return nullptr;
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
+    PendingQuery& p = _pending_queries[i];
+    if (!p.in_use) continue;
+    if (p.query_id != query_id) continue;
+    if (p.target_hash != target_hash) continue;
+    return &p;
+  }
+  return nullptr;
+}
+
+bool BaseChatMesh::tryQueryThenSend(const ContactInfo& /*recipient*/,
+                                     mesh::Packet* /*pkt*/,
+                                     uint32_t /*expected_ack*/) {
+  return false;  // Filled in Task 5.
+}
+
+void BaseChatMesh::onPathOfferRecv(mesh::Packet* /*packet*/) {
+  // Filled in Task 6.
+}
+
+void BaseChatMesh::checkPendingQueries() {
+  // Filled in Task 5 (deadline-driven resolution).
+}
