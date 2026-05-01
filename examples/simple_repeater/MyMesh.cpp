@@ -1,5 +1,6 @@
 #include "MyMesh.h"
 #include <algorithm>
+#include <helpers/PathProtocol.h>
 
 /* ------------------------------ Config -------------------------------- */
 
@@ -836,6 +837,67 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       return;
     }
     putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
+  } else if ((type == CTL_TYPE_PATH_REQ) && packet->payload_len >= PATH_REQ_HEADER_SIZE) {
+    // --- BEGIN PATH_REQ handler (Phase 2) ---
+    // Parse request
+    uint8_t subtype_byte = packet->payload[0];
+    bool has_full_hash = (subtype_byte & PATH_REQ_FLAG_FULL_TARGET) != 0;
+    int i = 1;
+    uint8_t querier_hash = packet->payload[i++];
+    uint8_t query_id     = packet->payload[i++];
+    uint8_t target_hash  = packet->payload[i++];
+    const uint8_t* full_target = nullptr;
+    if (has_full_hash) {
+      if (i + PATH_REQ_FULL_TARGET_SIZE > packet->payload_len) return;  // malformed
+      full_target = &packet->payload[i];
+      i += PATH_REQ_FULL_TARGET_SIZE;
+    }
+    if (i >= packet->payload_len) return;  // missing exclude_len
+    uint8_t exclude_len = packet->payload[i++];
+    if (exclude_len > PATH_REQ_EXCLUDE_MAX) return;  // out of range
+    if (i + exclude_len > packet->payload_len) return;  // truncated
+    const uint8_t* exclude_path = exclude_len > 0 ? &packet->payload[i] : nullptr;
+
+    // Cache lookup
+    RouteEntry results[1];
+    int n = route_cache.lookup(target_hash, /*hash_size*/ 1,
+                                exclude_path, exclude_len,
+                                results, 1, getRTCClock()->getCurrentTime());
+    if (n == 0) return;  // we don't know; stay silent
+
+    // If full_target was provided, confirm exact match (drops 1-byte-hash collisions)
+    if (full_target != nullptr
+        && memcmp(results[0].dest_pubkey, full_target, PUB_KEY_SIZE) != 0) {
+      return;  // different node despite hash-prefix match
+    }
+
+    // Build PATH_OFFER
+    uint8_t data[PATH_OFFER_MAX_BYTES];
+    int j = 0;
+    data[j++] = CTL_TYPE_PATH_OFFER;
+    data[j++] = querier_hash;
+    data[j++] = query_id;
+    data[j++] = target_hash;
+    data[j++] = self_id.pub_key[0];   // responder_hash (PATH_HASH_SIZE prefix)
+    data[j++] = results[0].hop_count;
+    data[j++] = (uint8_t)results[0].last_snr_x4;
+    uint32_t now_secs = getRTCClock()->getCurrentTime();
+    uint32_t age = (now_secs >= results[0].last_seen_secs)
+                     ? (now_secs - results[0].last_seen_secs) : 0;
+    if (age > 65535) age = 65535;
+    uint16_t age_u16 = (uint16_t)age;
+    memcpy(&data[j], &age_u16, 2); j += 2;
+    if (results[0].hop_count > 0) {
+      memcpy(&data[j], results[0].path, results[0].hop_count);
+      j += results[0].hop_count;
+    }
+
+    auto resp = createControlData(data, j);
+    if (resp) {
+      // Established multi-responder zero-hop pattern (see same file's discover handler).
+      sendZeroHop(resp, getRetransmitDelay(resp) * 4);
+    }
+    // --- END PATH_REQ handler ---
   }
 }
 
