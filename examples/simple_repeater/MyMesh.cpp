@@ -634,6 +634,20 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
                           const uint8_t *app_data, size_t app_data_len) {
   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
 
+  // RouteCache update (Phase 1): the wire path is the trail of forwarders from origin to here.
+  // Reverse it for storage so it can be used as a SOURCE-ROUTE to the origin from here.
+  uint8_t hop_count = packet->getPathHashCount();
+  uint8_t hash_size = packet->getPathHashSize();
+  if (hash_size == 1 && hop_count <= ROUTE_CACHE_PATH_MAX) {
+    uint8_t reversed[ROUTE_CACHE_PATH_MAX];
+    for (uint8_t i = 0; i < hop_count; i++) {
+      reversed[i] = packet->path[hop_count - 1 - i];
+    }
+    int8_t snr_x4 = (int8_t)(packet->getSNR() * 4.0f);
+    route_cache.observe(id.pub_key, reversed, hop_count, snr_x4,
+                        getRTCClock()->getCurrentTime());
+  }
+
   // if this a zero hop advert (and not via 'Share'), add it to neighbours
   if (packet->path_len == 0 && !isShare(packet)) {
     AdvertDataParser parser(app_data, app_data_len);
@@ -1101,6 +1115,13 @@ void MyMesh::formatNeighborsReply(char *reply) {
     dp += 6;
   }
   *dp = 0; // null terminator
+}
+
+void MyMesh::formatRoutesReply(char *reply) {
+  // Real implementation in Task 11; stub for now.
+  if (reply) {
+    snprintf(reply, 32, "routes: %d entries", route_cache.size());
+  }
 }
 
 void MyMesh::removeNeighbor(const uint8_t *pubkey, int key_len) {

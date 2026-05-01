@@ -33,6 +33,7 @@
 #include <helpers/StatsFormatHelper.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/RegionMap.h>
+#include <helpers/RouteCache.h>
 #include "RateLimiter.h"
 
 #ifdef WITH_BRIDGE
@@ -103,6 +104,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   unsigned long pending_discover_until;
   bool region_load_active;
   unsigned long dirty_contacts_expiry;
+  RouteCache route_cache;
 #if MAX_NEIGHBOURS
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -210,6 +212,7 @@ public:
   void dumpLogFile() override;
   void setTxPower(int8_t power_dbm) override;
   void formatNeighborsReply(char *reply) override;
+  void formatRoutesReply(char *reply) override;
   void removeNeighbor(const uint8_t* pubkey, int key_len) override;
   void formatStatsReply(char *reply) override;
   void formatRadioStatsReply(char *reply) override;
