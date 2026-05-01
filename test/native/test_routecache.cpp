@@ -276,6 +276,53 @@ TEST(test_prune_compacts_entries) {
     assert(e.path[0] == 0x02);   // only p2 survived; appears at index 0 after compaction
 }
 
+TEST(test_eviction_at_capacity) {
+    RouteCache cache;
+    // Fill cache to capacity, then add one more.
+    for (int i = 0; i < ROUTE_CACHE_CAPACITY; i++) {
+        uint8_t key[PUB_KEY_SIZE];
+        memset(key, 0, PUB_KEY_SIZE);
+        // Vary first 2 bytes to guarantee distinct keys.
+        key[0] = (uint8_t)(i & 0xFF);
+        key[1] = (uint8_t)((i >> 8) & 0xFF);
+        uint8_t path[1] = { 0x00 };
+        cache.observe(key, path, 1, 4, 1000 + i);   // i is the timestamp offset
+    }
+    assert(cache.size() == ROUTE_CACHE_CAPACITY);
+
+    // First entry (timestamp 1000) is the LRU. Adding a new entry with a
+    // distinctive marker should evict that one.
+    uint8_t marker_key[PUB_KEY_SIZE];
+    memset(marker_key, 0xFF, PUB_KEY_SIZE);
+    uint8_t marker_path[1] = { 0xEE };
+    cache.observe(marker_key, marker_path, 1, 4, /*now=*/ 5000);
+
+    assert(cache.size() == ROUTE_CACHE_CAPACITY);   // still at cap, not over
+
+    // Verify oldest got evicted: lookup with hash 0x00 (the LRU's first byte)
+    // should NOT return an entry whose pubkey[0] == 0 AND last_seen_secs == 1000.
+    bool found_old = false;
+    for (int j = 0; j < cache.size(); j++) {
+        RouteEntry e;
+        cache.getEntry(j, e);
+        if (e.dest_pubkey[0] == 0 && e.dest_pubkey[1] == 0 && e.last_seen_secs == 1000) {
+            found_old = true; break;
+        }
+    }
+    assert(!found_old);
+
+    // Verify the new marker is present.
+    bool found_marker = false;
+    for (int j = 0; j < cache.size(); j++) {
+        RouteEntry e;
+        cache.getEntry(j, e);
+        if (memcmp(e.dest_pubkey, marker_key, PUB_KEY_SIZE) == 0) {
+            found_marker = true; break;
+        }
+    }
+    assert(found_marker);
+}
+
 int main() {
     std::printf("test_routecache: %d test(s) registered\n", tests_run);
     if (tests_failed) {
