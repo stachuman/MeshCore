@@ -59,7 +59,9 @@ struct NodePrefs { // persisted to file
   float adc_multiplier;
   char owner_info[120];
   uint8_t rx_boosted_gain; // power settings
-  uint32_t route_cache_ttl_secs; // Phase 1 routing: RouteCache entry TTL (default 1800)
+  uint32_t route_cache_ttl_secs;     // Phase 1 routing: RouteCache entry TTL (default 1800)
+  uint8_t  path_query_enabled;       // Phase 2 routing: gate for endpoint PATH_REQ-before-flood
+  uint16_t path_query_timeout_ms;    // Phase 2 routing: PATH_OFFER collection window
   uint8_t path_hash_mode;   // which path mode to use when sending
   uint8_t loop_detect;
 };
