@@ -89,9 +89,29 @@ int RouteCache::lookup(uint8_t dest_hash, uint8_t hash_size,
   return written;
 }
 
-int32_t RouteCache::computeScore(const RouteEntry& e, uint32_t /*now_secs*/) {
-  // Placeholder: order by recency. Real formula in Task 6.
-  return (int32_t)e.last_seen_secs;
+int32_t RouteCache::computeScore(const RouteEntry& e, uint32_t now_secs) {
+  // SNR contribution: clamp(snr_dB + 20, 0, 60)
+  int32_t snr_dB = (int32_t)e.last_snr_x4 / 4;
+  int32_t snr_term = snr_dB + 20;
+  if (snr_term < 0) snr_term = 0;
+  if (snr_term > 60) snr_term = 60;
+
+  // Freshness: clamp(60 - age_minutes, 0, 60)
+  int32_t age_minutes = (now_secs >= e.last_seen_secs)
+      ? (int32_t)((now_secs - e.last_seen_secs) / 60)
+      : 0;
+  int32_t fresh_term = 60 - age_minutes;
+  if (fresh_term < 0) fresh_term = 0;
+  if (fresh_term > 60) fresh_term = 60;
+
+  // Hop penalty
+  int32_t hop_term = -5 * (int32_t)e.hop_count;
+
+  // Stability bonus
+  int32_t stab_term = (int32_t)e.n_seen;
+  if (stab_term > 10) stab_term = 10;
+
+  return snr_term + fresh_term + hop_term + stab_term;
 }
 
 void RouteCache::prune(uint32_t /*now_secs*/) {

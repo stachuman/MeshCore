@@ -186,6 +186,58 @@ TEST(test_lookup_exclude_different_length_no_match) {
     assert(n == 1);
 }
 
+// Helper: build an entry directly for score testing.
+static RouteEntry mkEntry(int8_t snr_x4, uint8_t hop_count, uint16_t n_seen,
+                          uint32_t last_seen_secs) {
+    RouteEntry e{};
+    e.last_snr_x4 = snr_x4;
+    e.hop_count = hop_count;
+    e.n_seen = n_seen;
+    e.last_seen_secs = last_seen_secs;
+    e.first_seen_secs = last_seen_secs;
+    return e;
+}
+
+TEST(test_score_fresh_strong_short) {
+    // SNR +10 dB → snr_x4=40, snr/4=10, +20 = 30 (clamped to 60).
+    // Age 0 min → freshness 60.
+    // 1 hop → -5.
+    // n_seen=5 → +5.
+    // Total: 30 + 60 - 5 + 5 = 90.
+    RouteEntry e = mkEntry(/*snr_x4*/ 40, /*hops*/ 1, /*n_seen*/ 5, /*ts*/ 1000);
+    int32_t s = RouteCache::computeScore(e, /*now*/ 1000);
+    assert(s == 90);
+}
+
+TEST(test_score_old_entry_drops_freshness) {
+    // SNR +10 dB → 30; freshness clamp(60 - 90 min, 0, 60) = 0; 1 hop -5; n_seen 1 +1.
+    // Total: 30 + 0 - 5 + 1 = 26.
+    RouteEntry e = mkEntry(40, 1, 1, 1000);
+    int32_t s = RouteCache::computeScore(e, 1000 + 90 * 60);
+    assert(s == 26);
+}
+
+TEST(test_score_negative_snr_clamps_at_zero) {
+    // SNR -25 dB → snr_x4=-100, snr/4=-25, +20 = -5 → clamped to 0.
+    // Fresh, 0 hops, n_seen=1 → 0 + 60 - 0 + 1 = 61.
+    RouteEntry e = mkEntry(-100, 0, 1, 1000);
+    int32_t s = RouteCache::computeScore(e, 1000);
+    assert(s == 61);
+}
+
+TEST(test_score_long_path_can_go_negative) {
+    // Strong SNR but 30-hop path: 30 + 60 - 5*30 + 1 = -59.
+    RouteEntry e = mkEntry(40, 30, 1, 1000);
+    int32_t s = RouteCache::computeScore(e, 1000);
+    assert(s == -59);
+}
+
+TEST(test_score_n_seen_caps_at_10) {
+    RouteEntry e1 = mkEntry(40, 1, 10, 1000);
+    RouteEntry e2 = mkEntry(40, 1, 50, 1000);
+    assert(RouteCache::computeScore(e1, 1000) == RouteCache::computeScore(e2, 1000));
+}
+
 int main() {
     std::printf("test_routecache: %d test(s) registered\n", tests_run);
     if (tests_failed) {
