@@ -2164,6 +2164,9 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
+  // Phase 2 cold-start fix: resolve any pending PATH_REQ queries whose deadline expired.
+  checkPendingQueries();
+
   if (_cli_rescue) {
     checkCLIRescueCmd();
   } else {

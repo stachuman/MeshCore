@@ -148,6 +148,9 @@ protected:
   PendingQuery* findPendingSlot();
   PendingQuery* matchPending(uint8_t querier_hash, uint8_t query_id, uint8_t target_hash);
 
+  // Subclasses override to surface NodePrefs.path_query_timeout_ms.
+  virtual uint16_t _path_query_timeout_ms_for_send() const { return 500; }
+
   // storage concepts, for sub-classes to override/implement
   virtual int  getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) { return 0; }  // not implemented
   virtual bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) { return false; }

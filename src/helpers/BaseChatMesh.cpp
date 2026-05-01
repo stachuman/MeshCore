@@ -1,5 +1,6 @@
 #include <helpers/BaseChatMesh.h>
 #include <Utils.h>
+#include "PathProtocol.h"
 
 #ifndef SERVER_RESPONSE_DELAY
   #define SERVER_RESPONSE_DELAY   300
@@ -968,10 +969,53 @@ BaseChatMesh::PendingQuery* BaseChatMesh::matchPending(uint8_t querier_hash,
   return nullptr;
 }
 
-bool BaseChatMesh::tryQueryThenSend(const ContactInfo& /*recipient*/,
-                                     mesh::Packet* /*pkt*/,
-                                     uint32_t /*expected_ack*/) {
-  return false;  // Filled in Task 5.
+bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* pkt,
+                                     uint32_t expected_ack) {
+  // Caller passes a packet built for sendDirect once we have a path. We hold it here
+  // until the query resolves (offer arrives or deadline passes).
+  PendingQuery* slot = findPendingSlot();
+  if (slot == nullptr) {
+    return false;  // table full; caller falls through to flood (today's behavior)
+  }
+
+  // Find contact index (linear scan; matches existing patterns in this file)
+  int contact_idx = -1;
+  for (int i = 0; i < num_contacts; i++) {
+    if (memcmp(contacts[i].id.pub_key, recipient.id.pub_key, PUB_KEY_SIZE) == 0) {
+      contact_idx = i; break;
+    }
+  }
+
+  // Build PATH_REQ
+  uint8_t qid = (uint8_t)getRNG()->nextInt(1, 256);   // 1..255 (avoid 0 as sentinel)
+  uint8_t req[PATH_REQ_HEADER_SIZE + 1];   // header + exclude_len=0; no full_target in v1
+  int j = 0;
+  req[j++] = CTL_TYPE_PATH_REQ;             // no flags set: 1-byte target hash, no exclude
+  req[j++] = self_id.pub_key[0];            // querier_hash
+  req[j++] = qid;
+  req[j++] = recipient.id.pub_key[0];       // target_hash
+  req[j++] = 0;                             // exclude_len = 0
+
+  mesh::Packet* req_pkt = createControlData(req, j);
+  if (req_pkt == nullptr) {
+    return false;  // packet pool empty; fall through to flood
+  }
+
+  // Slot allocation succeeds: claim it
+  slot->in_use = true;
+  slot->query_id = qid;
+  slot->target_hash = recipient.id.pub_key[0];
+  slot->contact_idx = contact_idx;
+  slot->best_score = -1;
+  slot->best_responder_hash = 0;
+  slot->best_path_len = 0;
+  slot->deferred_pkt = pkt;
+  slot->pending_expected_ack = expected_ack;
+  slot->deadline_millis = futureMillis(_path_query_timeout_ms_for_send());
+
+  // Emit the PATH_REQ as a zero-hop control packet (default delay=0).
+  sendZeroHop(req_pkt);
+  return true;   // caller should NOT also send pkt; we own it now
 }
 
 void BaseChatMesh::onPathOfferRecv(mesh::Packet* /*packet*/) {
@@ -979,5 +1023,46 @@ void BaseChatMesh::onPathOfferRecv(mesh::Packet* /*packet*/) {
 }
 
 void BaseChatMesh::checkPendingQueries() {
-  // Filled in Task 5 (deadline-driven resolution).
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
+    PendingQuery& p = _pending_queries[i];
+    if (!p.in_use) continue;
+    if (!millisHasNowPassed(p.deadline_millis)) continue;
+
+    // Deadline reached - resolve.
+    if (p.contact_idx < 0 || p.contact_idx >= num_contacts) {
+      // Contact disappeared; drop the deferred packet
+      if (p.deferred_pkt != nullptr) {
+        releasePacket(p.deferred_pkt);
+      }
+      p.in_use = false;
+      p.deferred_pkt = nullptr;
+      continue;
+    }
+
+    ContactInfo& contact = contacts[p.contact_idx];
+
+    if (p.best_path_len > 0 || p.best_responder_hash != 0) {
+      // Got at least one offer - install full path = [responder_hash | best_path]
+      // (best_path_len==0 is valid: responder is the destination's direct neighbor)
+      uint8_t full_path[1 + 16];
+      full_path[0] = p.best_responder_hash;
+      if (p.best_path_len > 0) {
+        memcpy(&full_path[1], p.best_path, p.best_path_len);
+      }
+      uint8_t full_path_len = 1 + p.best_path_len;
+
+      // Update Contact (via the same mechanism onContactPathRecv uses)
+      contact.out_path_len = mesh::Packet::copyPath(contact.out_path, full_path, full_path_len);
+      onContactPathUpdated(contact);
+
+      // Send the deferred packet via the new direct path
+      sendDirect(p.deferred_pkt, contact.out_path, contact.out_path_len);
+    } else {
+      // No offer received - fall through to today's behavior: flood.
+      sendFloodScoped(contact, p.deferred_pkt);
+    }
+
+    p.in_use = false;
+    p.deferred_pkt = nullptr;
+  }
 }
