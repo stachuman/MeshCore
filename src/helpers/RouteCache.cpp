@@ -4,9 +4,41 @@ RouteCache::RouteCache(uint32_t ttl_secs) : _used(0), _ttl_secs(ttl_secs) {
   memset(_entries, 0, sizeof(_entries));
 }
 
-void RouteCache::observe(const uint8_t* /*dest_pubkey*/, const uint8_t* /*path*/,
-                          uint8_t /*hop_count*/, int8_t /*snr_x4*/, uint32_t /*now_secs*/) {
-  // TASK 3 fills this in.
+void RouteCache::observe(const uint8_t* dest_pubkey, const uint8_t* path,
+                          uint8_t hop_count, int8_t snr_x4, uint32_t now_secs) {
+  if (hop_count > ROUTE_CACHE_PATH_MAX) {
+    return;  // path too long to store; silently drop
+  }
+
+  int existing = findExact(dest_pubkey, path, hop_count);
+  if (existing >= 0) {
+    RouteEntry& e = _entries[existing];
+    e.last_snr_x4 = snr_x4;
+    e.last_seen_secs = now_secs;
+    if (e.n_seen < UINT16_MAX) e.n_seen++;
+    return;
+  }
+
+  // New entry. Either append (have room) or evict oldest (LRU).
+  int idx;
+  if (_used < ROUTE_CACHE_CAPACITY) {
+    idx = _used++;
+  } else {
+    idx = findOldest();
+  }
+
+  RouteEntry& e = _entries[idx];
+  memcpy(e.dest_pubkey, dest_pubkey, PUB_KEY_SIZE);
+  e.hop_count = hop_count;
+  if (hop_count > 0) memcpy(e.path, path, hop_count);
+  if (hop_count < ROUTE_CACHE_PATH_MAX) {
+    memset(&e.path[hop_count], 0, ROUTE_CACHE_PATH_MAX - hop_count);
+  }
+  e.last_snr_x4 = snr_x4;
+  e.n_seen = 1;
+  e.first_seen_secs = now_secs;
+  e.last_seen_secs = now_secs;
+  memset(e._reserved, 0, sizeof(e._reserved));
 }
 
 int RouteCache::lookup(uint8_t /*dest_hash*/, uint8_t /*hash_size*/,
