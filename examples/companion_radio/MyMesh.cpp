@@ -868,7 +868,6 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.tx_power_dbm = LORA_TX_POWER;
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
-  _prefs.route_cache_ttl_secs = 1800;   // Phase 1: 30 min default
   _prefs.path_query_enabled = 1;        // Phase 2: cold-start fix on by default
   _prefs.path_query_timeout_ms = 500;   // Phase 2: PATH_OFFER collection window
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
@@ -928,6 +927,8 @@ void MyMesh::begin(bool has_display) {
   _prefs.tx_power_dbm = constrain(_prefs.tx_power_dbm, -9, MAX_LORA_TX_POWER);
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  _prefs.path_query_enabled = constrain(_prefs.path_query_enabled, 0, 1);
+  _prefs.path_query_timeout_ms = constrain((uint16_t)_prefs.path_query_timeout_ms, (uint16_t)100, (uint16_t)5000);
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {

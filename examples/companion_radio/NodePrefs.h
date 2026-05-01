@@ -34,4 +34,6 @@ struct NodePrefs {  // persisted to file
   uint8_t autoadd_max_hops;  // 0 = no limit, 1 = direct (0 hops), N = up to N-1 hops (max 64)
   char default_scope_name[31];
   uint8_t default_scope_key[16];
+  uint8_t  path_query_enabled;     // Phase 2 routing: gate for endpoint PATH_REQ-before-flood
+  uint16_t path_query_timeout_ms;  // Phase 2 routing: PATH_OFFER collection window
 };
