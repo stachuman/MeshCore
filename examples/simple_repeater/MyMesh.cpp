@@ -837,7 +837,8 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       return;
     }
     putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
-  } else if ((type == CTL_TYPE_PATH_REQ) && packet->payload_len >= PATH_REQ_HEADER_SIZE) {
+  } else if ((type == CTL_TYPE_PATH_REQ) && packet->payload_len >= PATH_REQ_HEADER_SIZE
+             && !_prefs.disable_fwd && path_req_limiter.allow(rtc_clock.getCurrentTime())) {
     // --- BEGIN PATH_REQ handler (Phase 2) ---
     // Parse request
     uint8_t subtype_byte = packet->payload[0];
@@ -859,10 +860,11 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
     const uint8_t* exclude_path = exclude_len > 0 ? &packet->payload[i] : nullptr;
 
     // Cache lookup
+    uint32_t now_secs = getRTCClock()->getCurrentTime();
     RouteEntry results[1];
     int n = route_cache.lookup(target_hash, /*hash_size*/ 1,
                                 exclude_path, exclude_len,
-                                results, 1, getRTCClock()->getCurrentTime());
+                                results, 1, now_secs);
     if (n == 0) return;  // we don't know; stay silent
 
     // If full_target was provided, confirm exact match (drops 1-byte-hash collisions)
@@ -881,7 +883,6 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
     data[j++] = self_id.pub_key[0];   // responder_hash (PATH_HASH_SIZE prefix)
     data[j++] = results[0].hop_count;
     data[j++] = (uint8_t)results[0].last_snr_x4;
-    uint32_t now_secs = getRTCClock()->getCurrentTime();
     uint32_t age = (now_secs >= results[0].last_seen_secs)
                      ? (now_secs - results[0].last_seen_secs) : 0;
     if (age > 65535) age = 65535;
@@ -924,7 +925,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
       _cli(board, rtc, sensors, region_map, acl, &_prefs, this),
       telemetry(MAX_PACKET_PAYLOAD - 4),
       discover_limiter(4, 120),  // max 4 every 2 minutes
-      anon_limiter(4, 180)   // max 4 every 3 minutes
+      anon_limiter(4, 180),  // max 4 every 3 minutes
+      path_req_limiter(4, 120)   // max 4 every 2 minutes (matches discover_limiter)
 #if defined(WITH_RS232_BRIDGE)
       , bridge(&_prefs, WITH_RS232_BRIDGE, _mgr, &rtc)
 #endif
