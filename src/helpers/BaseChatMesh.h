@@ -149,7 +149,9 @@ protected:
   PendingQuery* matchPending(uint8_t querier_hash, uint8_t query_id, uint8_t target_hash);
 
   // Subclasses override to surface NodePrefs.path_query_timeout_ms.
-  virtual uint16_t _path_query_timeout_ms_for_send() const { return 500; }
+  // Non-const because subclasses may compute the timeout from the radio's airtime
+  // estimate (Radio::getEstAirtimeFor is non-const).
+  virtual uint16_t _path_query_timeout_ms_for_send() { return 500; }
 
   // Subclasses override to surface NodePrefs.path_query_enabled.
   virtual bool _path_query_enabled_for_send() const { return false; }

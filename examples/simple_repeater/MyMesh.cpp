@@ -895,8 +895,11 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
 
     auto resp = createControlData(data, j);
     if (resp) {
-      // Established multi-responder zero-hop pattern (see same file's discover handler).
-      sendZeroHop(resp, getRetransmitDelay(resp) * 4);
+      // Multi-responder jitter spread, scaled to OFFER airtime by getRetransmitDelay
+      // (range 0..~2.5 * airtime). Tighter than the *4 used for DISCOVER because PATH_REQ
+      // typically reaches few responders (the querier's 1-hop neighborhood) — heavy spread
+      // pushes the OFFER past the companion's adaptive timeout window at high SF.
+      sendZeroHop(resp, getRetransmitDelay(resp));
     }
     // --- END PATH_REQ handler ---
   }

@@ -30,6 +30,7 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/BaseSerialInterface.h>
 #include <helpers/IdentityStore.h>
+#include <helpers/PathProtocol.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <target.h>
@@ -154,7 +155,16 @@ protected:
   void onSendTimeout() override;
 
   bool _path_query_enabled_for_send() const override { return _prefs.path_query_enabled != 0; }
-  uint16_t _path_query_timeout_ms_for_send() const override { return _prefs.path_query_timeout_ms; }
+  uint16_t _path_query_timeout_ms_for_send() override {
+    // Adaptive: cover REQ airtime + max repeater jitter (getRetransmitDelay max ≈ 2.5×airtime)
+    // + OFFER airtime + small safety margin. Approx 5 × OFFER_airtime since REQ ≈ OFFER size.
+    // Falls back to the NodePref value if it's larger (operator override / floor).
+    uint32_t offer_airtime_ms = _radio->getEstAirtimeFor(PATH_OFFER_MAX_BYTES);
+    uint32_t adaptive = offer_airtime_ms * 5;
+    if (adaptive > 5000) adaptive = 5000;   // honor outer sanity cap
+    if ((uint32_t)_prefs.path_query_timeout_ms > adaptive) return _prefs.path_query_timeout_ms;
+    return (uint16_t)adaptive;
+  }
 
   // DataStoreHost methods
   bool onContactLoaded(const ContactInfo& contact) override { return addContact(contact); }
