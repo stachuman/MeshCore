@@ -995,7 +995,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 
   _prefs.route_cache_ttl_secs = 1800;   // 30 min default
   _prefs.path_query_enabled = 1;        // Phase 2: cold-start fix on by default
-  _prefs.path_query_timeout_ms = 500;   // Phase 2: PATH_OFFER collection window
+  _prefs.path_query_timeout_ms = 2000;  // Phase 2: PATH_OFFER collection window (covers worst-case multi-responder jitter ~1.6s)
 
   memset(default_scope.key, 0, sizeof(default_scope.key));
 }

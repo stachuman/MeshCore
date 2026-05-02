@@ -877,7 +877,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
   _prefs.path_query_enabled = 1;        // Phase 2: cold-start fix on by default
-  _prefs.path_query_timeout_ms = 500;   // Phase 2: PATH_OFFER collection window
+  _prefs.path_query_timeout_ms = 2000;  // Phase 2: PATH_OFFER collection window (covers worst-case multi-responder jitter ~1.6s)
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
 #if defined(USE_SX1262) || defined(USE_SX1268)
 #ifdef SX126X_RX_BOOSTED_GAIN
