@@ -943,6 +943,9 @@ void BaseChatMesh::loop() {
     releasePacket(_pendingLoopback);   // undo the obtainNewPacket()
     _pendingLoopback = NULL;
   }
+
+  // Phase 2 cold-start fix: resolve any pending PATH_REQ queries whose deadline expired.
+  checkPendingQueries();
 }
 
 // === Phase 2 cold-start fix: pending PATH_REQ tracking ===
@@ -1053,6 +1056,7 @@ void BaseChatMesh::checkPendingQueries() {
 
       // Update Contact (via the same mechanism onContactPathRecv uses)
       contact.out_path_len = mesh::Packet::copyPath(contact.out_path, full_path, full_path_len);
+      contact.lastmod = getRTCClock()->getCurrentTime();
       onContactPathUpdated(contact);
 
       // Send the deferred packet via the new direct path
