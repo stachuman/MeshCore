@@ -153,6 +153,9 @@ protected:
   uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const override;
   void onSendTimeout() override;
 
+  bool _path_query_enabled_for_send() const override { return _prefs.path_query_enabled != 0; }
+  uint16_t _path_query_timeout_ms_for_send() const override { return _prefs.path_query_timeout_ms; }
+
   // DataStoreHost methods
   bool onContactLoaded(const ContactInfo& contact) override { return addContact(contact); }
   bool getContactForSave(uint32_t idx, ContactInfo& contact) override { return getContactByIdx(idx, contact); }

@@ -151,6 +151,9 @@ protected:
   // Subclasses override to surface NodePrefs.path_query_timeout_ms.
   virtual uint16_t _path_query_timeout_ms_for_send() const { return 500; }
 
+  // Subclasses override to surface NodePrefs.path_query_enabled.
+  virtual bool _path_query_enabled_for_send() const { return false; }
+
   // storage concepts, for sub-classes to override/implement
   virtual int  getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) { return 0; }  // not implemented
   virtual bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) { return false; }

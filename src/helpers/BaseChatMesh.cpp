@@ -424,9 +424,19 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
 
   int rc;
   if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
-    sendFloodScoped(recipient, pkt);
-    txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
-    rc = MSG_SEND_SENT_FLOOD;
+    if (_path_query_enabled_for_send()
+        && tryQueryThenSend(recipient, pkt, expected_ack)) {
+      // Deferred via PATH_REQ; resolution will flood-or-direct in checkPendingQueries.
+      // For UI purposes, treat as "in flight via flood" with extended timeout to
+      // cover the query window plus the eventual flood.
+      txt_send_timeout = futureMillis(est_timeout = _path_query_timeout_ms_for_send()
+                                                     + calcFloodTimeoutMillisFor(t));
+      rc = MSG_SEND_SENT_FLOOD;
+    } else {
+      sendFloodScoped(recipient, pkt);
+      txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
+      rc = MSG_SEND_SENT_FLOOD;
+    }
   } else {
     sendDirect(pkt, recipient.out_path, recipient.out_path_len);
     txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
@@ -450,9 +460,17 @@ int  BaseChatMesh::sendCommandData(const ContactInfo& recipient, uint32_t timest
   uint32_t t = _radio->getEstAirtimeFor(pkt->getRawLength());
   int rc;
   if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
-    sendFloodScoped(recipient, pkt);
-    txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
-    rc = MSG_SEND_SENT_FLOOD;
+    if (_path_query_enabled_for_send()
+        && tryQueryThenSend(recipient, pkt, 0)) {
+      // Deferred via PATH_REQ; resolution will flood-or-direct in checkPendingQueries.
+      txt_send_timeout = futureMillis(est_timeout = _path_query_timeout_ms_for_send()
+                                                     + calcFloodTimeoutMillisFor(t));
+      rc = MSG_SEND_SENT_FLOOD;
+    } else {
+      sendFloodScoped(recipient, pkt);
+      txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
+      rc = MSG_SEND_SENT_FLOOD;
+    }
   } else {
     sendDirect(pkt, recipient.out_path, recipient.out_path_len);
     txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
@@ -569,6 +587,12 @@ int BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password, 
   if (pkt) {
     uint32_t t = _radio->getEstAirtimeFor(pkt->getRawLength());
     if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
+      if (_path_query_enabled_for_send()
+          && tryQueryThenSend(recipient, pkt, 0)) {
+        // Deferred via PATH_REQ; resolution will flood-or-direct in checkPendingQueries.
+        est_timeout = _path_query_timeout_ms_for_send() + calcFloodTimeoutMillisFor(t);
+        return MSG_SEND_SENT_FLOOD;
+      }
       sendFloodScoped(recipient, pkt);
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
@@ -594,6 +618,12 @@ int BaseChatMesh::sendAnonReq(const ContactInfo& recipient, const uint8_t* data,
   if (pkt) {
     uint32_t t = _radio->getEstAirtimeFor(pkt->getRawLength());
     if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
+      if (_path_query_enabled_for_send()
+          && tryQueryThenSend(recipient, pkt, 0)) {
+        // Deferred via PATH_REQ; resolution will flood-or-direct in checkPendingQueries.
+        est_timeout = _path_query_timeout_ms_for_send() + calcFloodTimeoutMillisFor(t);
+        return MSG_SEND_SENT_FLOOD;
+      }
       sendFloodScoped(recipient, pkt);
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
@@ -621,6 +651,12 @@ int  BaseChatMesh::sendRequest(const ContactInfo& recipient, const uint8_t* req_
   if (pkt) {
     uint32_t t = _radio->getEstAirtimeFor(pkt->getRawLength());
     if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
+      if (_path_query_enabled_for_send()
+          && tryQueryThenSend(recipient, pkt, 0)) {
+        // Deferred via PATH_REQ; resolution will flood-or-direct in checkPendingQueries.
+        est_timeout = _path_query_timeout_ms_for_send() + calcFloodTimeoutMillisFor(t);
+        return MSG_SEND_SENT_FLOOD;
+      }
       sendFloodScoped(recipient, pkt);
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
@@ -648,6 +684,12 @@ int  BaseChatMesh::sendRequest(const ContactInfo& recipient, uint8_t req_type, u
   if (pkt) {
     uint32_t t = _radio->getEstAirtimeFor(pkt->getRawLength());
     if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
+      if (_path_query_enabled_for_send()
+          && tryQueryThenSend(recipient, pkt, 0)) {
+        // Deferred via PATH_REQ; resolution will flood-or-direct in checkPendingQueries.
+        est_timeout = _path_query_timeout_ms_for_send() + calcFloodTimeoutMillisFor(t);
+        return MSG_SEND_SENT_FLOOD;
+      }
       sendFloodScoped(recipient, pkt);
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
