@@ -1127,9 +1127,11 @@ void BaseChatMesh::checkPendingQueries() {
 
     ContactInfo& contact = contacts[p.contact_idx];
 
-    if (p.best_path_len > 0 || p.best_responder_hash != 0) {
+    if (p.best_score >= 0) {
       // Got at least one offer - install full path = [responder_hash | best_path]
-      // (best_path_len==0 is valid: responder is the destination's direct neighbor)
+      // (best_path_len==0 is valid: responder is the destination's direct neighbor;
+      //  best_responder_hash==0x00 is also valid when responder pubkey starts with 0x00.
+      //  Use best_score as the offer-presence gate since it's -1 until any offer arrives.)
       uint8_t full_path[1 + 16];
       full_path[0] = p.best_responder_hash;
       if (p.best_path_len > 0) {
