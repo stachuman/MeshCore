@@ -1063,8 +1063,49 @@ bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* 
   return true;   // caller should NOT also send pkt; we own it now
 }
 
-void BaseChatMesh::onPathOfferRecv(mesh::Packet* /*packet*/) {
-  // Filled in Task 6.
+void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
+  // Parse PATH_OFFER (per PathProtocol.h with responder_hash extension).
+  if (packet->payload_len < PATH_OFFER_HEADER_SIZE) return;
+  if ((packet->payload[0] & 0xF0) != CTL_TYPE_PATH_OFFER) return;
+
+  int i = 1;
+  uint8_t querier_hash   = packet->payload[i++];
+  uint8_t query_id       = packet->payload[i++];
+  uint8_t target_hash    = packet->payload[i++];
+  uint8_t responder_hash = packet->payload[i++];
+  uint8_t hop_count      = packet->payload[i++];
+  int8_t  last_snr_x4    = (int8_t)packet->payload[i++];
+  uint16_t age_secs;
+  memcpy(&age_secs, &packet->payload[i], 2); i += 2;
+
+  if (hop_count > PATH_OFFER_PATH_MAX) return;
+  if (i + hop_count > packet->payload_len) return;
+
+  PendingQuery* p = matchPending(querier_hash, query_id, target_hash);
+  if (p == nullptr) return;   // not for us, or query already resolved
+
+  // Score: combine remote score with our local link quality to the responder.
+  // Same formula shape as RouteCache::computeScore; recompute since we only have raw fields.
+  int32_t snr_term = ((int32_t)last_snr_x4 / 4) + 20;
+  if (snr_term < 0) snr_term = 0; if (snr_term > 60) snr_term = 60;
+  int32_t fresh_term = 60 - (int32_t)(age_secs / 60);
+  if (fresh_term < 0) fresh_term = 0; if (fresh_term > 60) fresh_term = 60;
+  int32_t hop_term = -5 * (int32_t)hop_count;
+  int32_t score = snr_term + fresh_term + hop_term;
+  // Local-link bonus: stronger SNR to responder = better choice
+  int32_t local_snr_dB = (int32_t)(packet->getSNR());
+  int32_t local_term = local_snr_dB + 20;
+  if (local_term < 0) local_term = 0; if (local_term > 60) local_term = 60;
+  score += local_term;
+
+  if ((int16_t)score > p->best_score) {
+    p->best_score = (int16_t)score;
+    p->best_responder_hash = responder_hash;
+    p->best_path_len = hop_count;
+    if (hop_count > 0) {
+      memcpy(p->best_path, &packet->payload[i], hop_count);
+    }
+  }
 }
 
 void BaseChatMesh::checkPendingQueries() {

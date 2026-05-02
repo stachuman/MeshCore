@@ -2,6 +2,7 @@
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
+#include <helpers/PathProtocol.h>
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -762,6 +763,13 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
+  // Phase 2 cold-start fix: dispatch PATH_OFFER before existing PUSH_CODE_CONTROL_DATA
+  // forwarding so the offer is consumed locally rather than handed to the app.
+  if (packet->payload_len >= 1 && (packet->payload[0] & 0xF0) == CTL_TYPE_PATH_OFFER) {
+    onPathOfferRecv(packet);
+    return;
+  }
+
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
