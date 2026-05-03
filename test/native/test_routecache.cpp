@@ -28,13 +28,14 @@ TEST(test_observe_inserts_first_entry) {
     fillKey(key, 0xAA);
     uint8_t path[3] = { 0x10, 0x20, 0x30 };
 
-    cache.observe(key, path, 3, /*snr_x4*/ 12, /*now_secs*/ 1000);
+    cache.observe(key, path, 3, /*hash_size*/ 1, /*snr_x4*/ 12, /*now_secs*/ 1000);
 
     assert(cache.size() == 1);
     RouteEntry e;
     assert(cache.getEntry(0, e));
     assert(memcmp(e.dest_pubkey, key, PUB_KEY_SIZE) == 0);
     assert(e.hop_count == 3);
+    assert(e.hash_size == 1);
     assert(e.path[0] == 0x10 && e.path[1] == 0x20 && e.path[2] == 0x30);
     assert(e.last_snr_x4 == 12);
     assert(e.n_seen == 1);
@@ -47,8 +48,8 @@ TEST(test_observe_updates_duplicate) {
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path[2] = { 0x42, 0x99 };
 
-    cache.observe(key, path, 2, 8, 1000);
-    cache.observe(key, path, 2, 16, 1500);   // same key+path, fresher SNR
+    cache.observe(key, path, 2, 1, 8, 1000);
+    cache.observe(key, path, 2, 1, 16, 1500);   // same key+path, fresher SNR
 
     assert(cache.size() == 1);   // not a new entry
     RouteEntry e;
@@ -65,8 +66,8 @@ TEST(test_observe_different_path_creates_new_entry) {
     uint8_t path_a[2] = { 0x01, 0x02 };
     uint8_t path_b[2] = { 0x01, 0x03 };   // diff at last byte
 
-    cache.observe(key, path_a, 2, 4, 1000);
-    cache.observe(key, path_b, 2, 4, 1000);
+    cache.observe(key, path_a, 2, 1, 4, 1000);
+    cache.observe(key, path_b, 2, 1, 4, 1000);
 
     assert(cache.size() == 2);
 }
@@ -76,15 +77,54 @@ TEST(test_observe_rejects_oversized_path) {
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path[20] = {0};   // bigger than ROUTE_CACHE_PATH_MAX
 
-    cache.observe(key, path, 20, 4, 1000);
+    cache.observe(key, path, 20, 1, 4, 1000);
 
     assert(cache.size() == 0);   // dropped silently — too long for storage
+}
+
+TEST(test_observe_rejects_invalid_hash_size) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path[3] = { 0x01, 0x02, 0x03 };
+
+    cache.observe(key, path, 3, /*hash_size*/ 0, 4, 1000);
+    cache.observe(key, path, 3, /*hash_size*/ 4, 4, 1000);
+
+    assert(cache.size() == 0);   // both dropped — hash_size must be 1..3
+}
+
+TEST(test_observe_hash_size_2_stores_correctly) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    // 4 hops × 2 bytes/hash = 8 bytes total
+    uint8_t path[8] = { 0xAB, 0xCD, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC };
+
+    cache.observe(key, path, 4, /*hash_size*/ 2, 4, 1000);
+
+    assert(cache.size() == 1);
+    RouteEntry e;
+    assert(cache.getEntry(0, e));
+    assert(e.hop_count == 4);
+    assert(e.hash_size == 2);
+    assert(memcmp(e.path, path, 8) == 0);
+}
+
+TEST(test_observe_hash_size_3_oversized_rejected) {
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    // 6 hops × 3 bytes/hash = 18 bytes — exceeds ROUTE_CACHE_PATH_MAX (16)
+    uint8_t path[18] = {0};
+
+    cache.observe(key, path, 6, /*hash_size*/ 3, 4, 1000);
+
+    assert(cache.size() == 0);   // rejected
 }
 
 TEST(test_lookup_empty_cache) {
     RouteCache cache;
     RouteEntry results[4];
-    int n = cache.lookup(/*dest_hash*/ 0xAA, /*hash_size*/ 1,
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, /*target_hash_size*/ 1, /*path_hash_size*/ 1,
                           /*exclude*/ nullptr, 0, results, 4, /*now*/ 1000);
     assert(n == 0);
 }
@@ -93,10 +133,11 @@ TEST(test_lookup_single_match) {
     RouteCache cache;
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path[1] = { 0x55 };
-    cache.observe(key, path, 1, 4, 1000);
+    cache.observe(key, path, 1, 1, 4, 1000);
 
     RouteEntry results[4];
-    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 4, 1000);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, nullptr, 0, results, 4, 1000);
     assert(n == 1);
     assert(memcmp(results[0].dest_pubkey, key, PUB_KEY_SIZE) == 0);
     assert(results[0].path[0] == 0x55);
@@ -106,10 +147,11 @@ TEST(test_lookup_no_hash_match) {
     RouteCache cache;
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path[1] = { 0x55 };
-    cache.observe(key, path, 1, 4, 1000);
+    cache.observe(key, path, 1, 1, 4, 1000);
 
     RouteEntry results[4];
-    int n = cache.lookup(/*dest_hash*/ 0xBB, 1, nullptr, 0, results, 4, 1000);
+    uint8_t target = 0xBB;
+    int n = cache.lookup(&target, 1, 1, nullptr, 0, results, 4, 1000);
     assert(n == 0);
 }
 
@@ -119,11 +161,12 @@ TEST(test_lookup_multi_match_orders_by_recency) {
     uint8_t path_a[2] = { 0x01, 0x02 };
     uint8_t path_b[2] = { 0x01, 0x03 };
 
-    cache.observe(key, path_a, 2, 4, 1000);   // older
-    cache.observe(key, path_b, 2, 4, 2000);   // newer
+    cache.observe(key, path_a, 2, 1, 4, 1000);   // older
+    cache.observe(key, path_b, 2, 1, 4, 2000);   // newer
 
     RouteEntry results[4];
-    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 4, 2000);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, nullptr, 0, results, 4, 2000);
     assert(n == 2);
     // With placeholder scoring (recency only), newer should be first.
     assert(results[0].last_seen_secs == 2000);
@@ -135,11 +178,12 @@ TEST(test_lookup_respects_max_results) {
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     for (int i = 0; i < 5; i++) {
         uint8_t path[1] = { (uint8_t)i };
-        cache.observe(key, path, 1, 4, 1000 + i);
+        cache.observe(key, path, 1, 1, 4, 1000 + i);
     }
 
     RouteEntry results[2];
-    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 2, 1100);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, nullptr, 0, results, 2, 1100);
     assert(n == 2);
 }
 
@@ -148,12 +192,13 @@ TEST(test_lookup_excludes_matching_path) {
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path_a[2] = { 0x01, 0x02 };
     uint8_t path_b[2] = { 0x01, 0x03 };
-    cache.observe(key, path_a, 2, 4, 1000);
-    cache.observe(key, path_b, 2, 4, 2000);
+    cache.observe(key, path_a, 2, 1, 4, 1000);
+    cache.observe(key, path_b, 2, 1, 4, 2000);
 
     uint8_t exclude[2] = { 0x01, 0x03 };
     RouteEntry results[4];
-    int n = cache.lookup(0xAA, 1, exclude, 2, results, 4, 2000);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, exclude, 2, results, 4, 2000);
 
     assert(n == 1);
     assert(results[0].path[1] == 0x02);   // path_a survived
@@ -163,11 +208,12 @@ TEST(test_lookup_exclude_no_match_returns_all) {
     RouteCache cache;
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path_a[2] = { 0x01, 0x02 };
-    cache.observe(key, path_a, 2, 4, 1000);
+    cache.observe(key, path_a, 2, 1, 4, 1000);
 
     uint8_t exclude_other[2] = { 0xFF, 0xFF };
     RouteEntry results[4];
-    int n = cache.lookup(0xAA, 1, exclude_other, 2, results, 4, 1000);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, exclude_other, 2, results, 4, 1000);
 
     assert(n == 1);
 }
@@ -184,12 +230,35 @@ TEST(test_lookup_ambiguous_prefix_returns_zero) {
     key_bob[1]   = 0x02;   // same first byte, different at byte 1
     uint8_t path_a[1] = { 0x01 };
     uint8_t path_b[1] = { 0x02 };
-    cache.observe(key_alice, path_a, 1, /*snr*/ 4, /*ts*/ 1000);
-    cache.observe(key_bob,   path_b, 1, /*snr*/ 4, /*ts*/ 1000);
+    cache.observe(key_alice, path_a, 1, 1, /*snr*/ 4, /*ts*/ 1000);
+    cache.observe(key_bob,   path_b, 1, 1, /*snr*/ 4, /*ts*/ 1000);
 
     RouteEntry results[4];
-    int n = cache.lookup(0xAA, /*hash_size*/ 1, nullptr, 0, results, 4, 1000);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, nullptr, 0, results, 4, 1000);
     assert(n == 0);   // ambiguous → silent; caller floods, real network resolves it
+}
+
+TEST(test_lookup_4byte_target_disambiguates) {
+    // Same setup as the ambiguity test but with a 4-byte target_hash, which
+    // distinguishes the two pubkeys (they differ at byte 1). Now lookup picks
+    // exactly one entry — the matching one.
+    RouteCache cache;
+    uint8_t key_alice[PUB_KEY_SIZE]; fillKey(key_alice, 0xAA);
+    key_alice[1] = 0x01;
+    uint8_t key_bob[PUB_KEY_SIZE];   fillKey(key_bob, 0xAA);
+    key_bob[1]   = 0x02;
+    uint8_t path_a[1] = { 0x01 };
+    uint8_t path_b[1] = { 0x02 };
+    cache.observe(key_alice, path_a, 1, 1, 4, 1000);
+    cache.observe(key_bob,   path_b, 1, 1, 4, 1000);
+
+    // 4-byte target matching alice (first 4 bytes = AA 01 AA AA)
+    uint8_t target_alice[4] = { 0xAA, 0x01, 0xAA, 0xAA };
+    RouteEntry results[4];
+    int n = cache.lookup(target_alice, 4, 1, nullptr, 0, results, 4, 1000);
+    assert(n == 1);
+    assert(results[0].path[0] == 0x01);   // alice's path
 }
 
 TEST(test_lookup_same_dest_multipath_not_ambiguous) {
@@ -199,12 +268,32 @@ TEST(test_lookup_same_dest_multipath_not_ambiguous) {
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path_a[2] = { 0x10, 0x20 };
     uint8_t path_b[2] = { 0x30, 0x40 };
-    cache.observe(key, path_a, 2, 4, 1000);
-    cache.observe(key, path_b, 2, 8, 1100);   // same dest, fresher and stronger
+    cache.observe(key, path_a, 2, 1, 4, 1000);
+    cache.observe(key, path_b, 2, 1, 8, 1100);   // same dest, fresher and stronger
 
     RouteEntry results[4];
-    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 4, 1100);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, nullptr, 0, results, 4, 1100);
     assert(n == 2);   // both paths returned; ambiguity gate doesn't fire on same-dest
+}
+
+TEST(test_lookup_filters_by_path_hash_size) {
+    // Cache holds entries at hash_size=1 AND hash_size=2 for the same dest prefix.
+    // A caller asking for path_hash_size=2 must get only the hash_size=2 entry —
+    // mixing them would corrupt the on-wire path bytes.
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path1[1] = { 0x55 };
+    uint8_t path2[2] = { 0xAB, 0xCD };
+    cache.observe(key, path1, 1, /*hash_size*/ 1, 4, 1000);
+    cache.observe(key, path2, 1, /*hash_size*/ 2, 4, 1000);
+
+    RouteEntry results[4];
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, /*path_hash_size*/ 2, nullptr, 0, results, 4, 1000);
+    assert(n == 1);
+    assert(results[0].hash_size == 2);
+    assert(results[0].path[0] == 0xAB && results[0].path[1] == 0xCD);
 }
 
 TEST(test_lookup_int16_snr_no_overflow) {
@@ -213,7 +302,7 @@ TEST(test_lookup_int16_snr_no_overflow) {
     RouteCache cache;
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xCC);
     uint8_t path[1] = { 0x55 };
-    cache.observe(key, path, 1, /*snr_x4*/ 200, /*ts*/ 1000);   // = +50 dB
+    cache.observe(key, path, 1, 1, /*snr_x4*/ 200, /*ts*/ 1000);   // = +50 dB
 
     RouteEntry e;
     assert(cache.getEntry(0, e));
@@ -224,22 +313,24 @@ TEST(test_lookup_exclude_different_length_no_match) {
     RouteCache cache;
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path_a[2] = { 0x01, 0x02 };
-    cache.observe(key, path_a, 2, 4, 1000);
+    cache.observe(key, path_a, 2, 1, 4, 1000);
 
     // Exclude has same first 2 bytes but length differs — should not match.
     uint8_t exclude_short[1] = { 0x01 };
     RouteEntry results[4];
-    int n = cache.lookup(0xAA, 1, exclude_short, 1, results, 4, 1000);
+    uint8_t target = 0xAA;
+    int n = cache.lookup(&target, 1, 1, exclude_short, 1, results, 4, 1000);
 
     assert(n == 1);
 }
 
 // Helper: build an entry directly for score testing.
-static RouteEntry mkEntry(int8_t snr_x4, uint8_t hop_count, uint16_t n_seen,
+static RouteEntry mkEntry(int16_t snr_x4, uint8_t hop_count, uint16_t n_seen,
                           uint32_t last_seen_secs) {
     RouteEntry e{};
     e.last_snr_x4 = snr_x4;
     e.hop_count = hop_count;
+    e.hash_size = 1;
     e.n_seen = n_seen;
     e.last_seen_secs = last_seen_secs;
     e.first_seen_secs = last_seen_secs;
@@ -290,7 +381,7 @@ TEST(test_prune_removes_expired) {
     RouteCache cache(/*ttl_secs*/ 100);
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path[1] = { 0x01 };
-    cache.observe(key, path, 1, 4, 1000);
+    cache.observe(key, path, 1, 1, 4, 1000);
     assert(cache.size() == 1);
 
     cache.prune(/*now*/ 1101);
@@ -301,7 +392,7 @@ TEST(test_prune_keeps_fresh) {
     RouteCache cache(/*ttl_secs*/ 100);
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
     uint8_t path[1] = { 0x01 };
-    cache.observe(key, path, 1, 4, 1000);
+    cache.observe(key, path, 1, 1, 4, 1000);
 
     cache.prune(/*now*/ 1050);   // within TTL
     assert(cache.size() == 1);
@@ -313,9 +404,9 @@ TEST(test_prune_compacts_entries) {
     uint8_t p1[1] = { 0x01 };
     uint8_t p2[1] = { 0x02 };
     uint8_t p3[1] = { 0x03 };
-    cache.observe(key, p1, 1, 4, 900);   // will expire
-    cache.observe(key, p2, 1, 4, 1000);  // survives
-    cache.observe(key, p3, 1, 4, 950);   // will expire
+    cache.observe(key, p1, 1, 1, 4, 900);   // will expire
+    cache.observe(key, p2, 1, 1, 4, 1000);  // survives
+    cache.observe(key, p3, 1, 1, 4, 950);   // will expire
 
     cache.prune(/*now*/ 1080);   // ttl=100, so anything older than 980 expires
     assert(cache.size() == 1);
@@ -334,7 +425,7 @@ TEST(test_eviction_at_capacity) {
         key[0] = (uint8_t)(i & 0xFF);
         key[1] = (uint8_t)((i >> 8) & 0xFF);
         uint8_t path[1] = { 0x00 };
-        cache.observe(key, path, 1, 4, 1000 + i);   // i is the timestamp offset
+        cache.observe(key, path, 1, 1, 4, 1000 + i);   // i is the timestamp offset
     }
     assert(cache.size() == ROUTE_CACHE_CAPACITY);
 
@@ -343,7 +434,7 @@ TEST(test_eviction_at_capacity) {
     uint8_t marker_key[PUB_KEY_SIZE];
     memset(marker_key, 0xFF, PUB_KEY_SIZE);
     uint8_t marker_path[1] = { 0xEE };
-    cache.observe(marker_key, marker_path, 1, 4, /*now=*/ 5000);
+    cache.observe(marker_key, marker_path, 1, 1, 4, /*now=*/ 5000);
 
     assert(cache.size() == ROUTE_CACHE_CAPACITY);   // still at cap, not over
 
@@ -377,6 +468,8 @@ TEST(test_path_protocol_constants_sane) {
     // CTL_TYPE_NEIGHBOR_RPC subtype is in the zero-hop range and doesn't collide
     // with existing DISCOVER subtypes (0x80, 0x90).
     static_assert((CTL_TYPE_NEIGHBOR_RPC & 0x80) != 0, "must be zero-hop CONTROL subtype");
+    static_assert((CTL_TYPE_NEIGHBOR_RPC & NEIGHBOR_RPC_SUBTYPE_HIGH_NIBBLE) == 0xC0,
+                  "subtype high nibble must be 0xC");
     static_assert(CTL_TYPE_NEIGHBOR_RPC != 0x80, "collides with DISCOVER_REQ");
     static_assert(CTL_TYPE_NEIGHBOR_RPC != 0x90, "collides with DISCOVER_RESP");
 
@@ -386,21 +479,46 @@ TEST(test_path_protocol_constants_sane) {
     static_assert(RPC_OP_PATH_OFFER >= 0x01 && RPC_OP_PATH_OFFER <= 0x7F, "RPC_OP_PATH_OFFER in feature range");
     static_assert(RPC_OP_PATH_REQ != RPC_OP_PATH_OFFER, "rpc_ops must not collide");
 
-    // Common header is exactly 6 bytes (subtype, sender_hash, recipient_hash, query_id, rpc_op, payload_len).
-    static_assert(NEIGHBOR_RPC_HEADER_SIZE == 6, "common header must be 6 bytes");
+    // Common header sizes: base = 5 (subtype+recipient+query_id+rpc_op+payload_len),
+    // variable sender_hash adds 1..3 bytes depending on hash_size.
+    static_assert(NEIGHBOR_RPC_HEADER_BASE_SIZE == 5, "base header must be 5 bytes");
+    static_assert(NEIGHBOR_RPC_HEADER_MIN_SIZE == 6,  "min header (1-byte hash) must be 6");
+    static_assert(NEIGHBOR_RPC_HEADER_MAX_SIZE == 8,  "max header (3-byte hash) must be 8");
 
     // Per-op payload size sanity.
-    static_assert(PATH_REQ_PAYLOAD_MIN  == 2, "PATH_REQ minimum payload = target_hash + exclude_len");
-    static_assert(PATH_OFFER_PAYLOAD_MIN == 5, "PATH_OFFER minimum payload = target+hops+snr+age");
-    static_assert(PATH_REQ_PAYLOAD_MAX  == 1 + PATH_REQ_FULL_TARGET_SIZE + 1 + PATH_REQ_EXCLUDE_MAX,
+    // PATH_REQ min = 4-byte target_hash + 1-byte exclude_len = 5
+    static_assert(PATH_REQ_PAYLOAD_MIN  == 5,
+                  "PATH_REQ min = target_hash(4) + exclude_len(1)");
+    // PATH_OFFER min = 4-byte target_hash + 1-byte hop_count + 1-byte snr + 2-byte age = 8
+    static_assert(PATH_OFFER_PAYLOAD_MIN == 8,
+                  "PATH_OFFER min = target_hash(4) + hop_count(1) + snr(1) + age(2)");
+    static_assert(PATH_REQ_PAYLOAD_MAX  == PATH_REQ_TARGET_HASH_SIZE + PATH_REQ_FULL_TARGET_SIZE
+                                            + 1 + PATH_REQ_EXCLUDE_BYTES_MAX,
                   "PATH_REQ max payload arithmetic mismatch");
-    static_assert(PATH_OFFER_PAYLOAD_MAX == PATH_OFFER_PAYLOAD_MIN + PATH_OFFER_PATH_MAX,
+    static_assert(PATH_OFFER_PAYLOAD_MAX == PATH_OFFER_PAYLOAD_MIN + PATH_OFFER_PATH_BYTES_MAX,
                   "PATH_OFFER max payload arithmetic mismatch");
 
     // Wire-budget check vs MAX_PACKET_PAYLOAD=184.
     static_assert(PATH_REQ_MAX_BYTES   <= 184, "PATH_REQ exceeds payload budget");
     static_assert(PATH_OFFER_MAX_BYTES <= 184, "PATH_OFFER exceeds payload budget");
     assert(true);
+}
+
+TEST(test_subtype_encoding_roundtrip) {
+    // Verify the subtype helpers correctly pack/unpack hash_size and op_flags.
+    for (uint8_t hs = 1; hs <= 3; hs++) {
+        for (uint8_t flags = 0; flags <= 3; flags++) {
+            uint8_t st = neighbor_rpc_subtype(hs, flags);
+            // High nibble must be 0xC
+            assert((st & NEIGHBOR_RPC_SUBTYPE_HIGH_NIBBLE) == 0xC0);
+            // hash_size decodes back
+            assert(neighbor_rpc_hash_size(st) == hs);
+            // flags survive
+            assert((st & NEIGHBOR_RPC_FLAGS_MASK) == flags);
+            // Header size = base + hash_size
+            assert(neighbor_rpc_header_size(hs) == NEIGHBOR_RPC_HEADER_BASE_SIZE + hs);
+        }
+    }
 }
 
 int main() {

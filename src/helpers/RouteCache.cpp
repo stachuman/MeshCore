@@ -5,12 +5,14 @@ RouteCache::RouteCache(uint32_t ttl_secs) : _used(0), _ttl_secs(ttl_secs) {
 }
 
 void RouteCache::observe(const uint8_t* dest_pubkey, const uint8_t* path,
-                          uint8_t hop_count, int16_t snr_x4, uint32_t now_secs) {
-  if (hop_count > ROUTE_CACHE_PATH_MAX) {
-    return;  // path too long to store; silently drop
-  }
+                          uint8_t hop_count, uint8_t hash_size,
+                          int16_t snr_x4, uint32_t now_secs) {
+  // Total path bytes for this entry; reject any entry that wouldn't fit.
+  size_t path_bytes = (size_t)hop_count * (size_t)hash_size;
+  if (hash_size == 0 || hash_size > 3) return;       // unsupported hash size
+  if (path_bytes > ROUTE_CACHE_PATH_MAX) return;     // path too long to store
 
-  int existing = findExact(dest_pubkey, path, hop_count);
+  int existing = findExact(dest_pubkey, path, hop_count, hash_size);
   if (existing >= 0) {
     RouteEntry& e = _entries[existing];
     e.last_snr_x4 = snr_x4;
@@ -30,37 +32,53 @@ void RouteCache::observe(const uint8_t* dest_pubkey, const uint8_t* path,
   RouteEntry& e = _entries[idx];
   memcpy(e.dest_pubkey, dest_pubkey, PUB_KEY_SIZE);
   e.hop_count = hop_count;
-  if (hop_count > 0) memcpy(e.path, path, hop_count);
-  if (hop_count < ROUTE_CACHE_PATH_MAX) {
-    memset(&e.path[hop_count], 0, ROUTE_CACHE_PATH_MAX - hop_count);
+  e.hash_size = hash_size;
+  if (path_bytes > 0) memcpy(e.path, path, path_bytes);
+  if (path_bytes < ROUTE_CACHE_PATH_MAX) {
+    memset(&e.path[path_bytes], 0, ROUTE_CACHE_PATH_MAX - path_bytes);
   }
-  e._pad1 = 0;
   e.last_snr_x4 = snr_x4;
   e.n_seen = 1;
-  e._pad2 = 0;
+  e._pad = 0;
   e.first_seen_secs = now_secs;
   e.last_seen_secs = now_secs;
 }
 
-int RouteCache::lookup(uint8_t dest_hash, uint8_t hash_size,
-                        const uint8_t* exclude_path, uint8_t exclude_path_len,
+int RouteCache::lookup(const uint8_t* target_hash, uint8_t target_hash_size,
+                        uint8_t path_hash_size,
+                        const uint8_t* exclude_path, uint8_t exclude_path_size_bytes,
                         RouteEntry* out_results, int max_results, uint32_t now_secs) {
   if (max_results <= 0 || out_results == nullptr) return 0;
+  if (target_hash == nullptr || target_hash_size == 0) return 0;
+  if (target_hash_size > PUB_KEY_SIZE) return 0;
 
   // Two-pass: (1) collect candidate indexes, (2) sort by score and copy.
+  // Stack-cost: ROUTE_CACHE_CAPACITY (256) * sizeof(int) ≈ 1 KB. Sized to the cache
+  // capacity so the ambiguity gate below can scan ALL surviving candidates — truncating
+  // could miss a colliding pubkey and silently route to the wrong destination.
   int candidates[ROUTE_CACHE_CAPACITY];
   int n_cand = 0;
 
   for (int i = 0; i < _used; i++) {
     const RouteEntry& e = _entries[i];
-    // Hash prefix match against destination
-    if (memcmp(e.dest_pubkey, &dest_hash, hash_size) != 0) continue;
 
-    // Skip explicitly excluded path
-    if (exclude_path != nullptr && exclude_path_len > 0
-        && e.hop_count == exclude_path_len
-        && memcmp(e.path, exclude_path, exclude_path_len) == 0) {
-      continue;
+    // Path-routing-mode filter: only entries whose stored hash_size matches the
+    // caller's path_hash_size are usable, since path bytes flow into the caller's
+    // sendDirect call at its own hash size and any mismatch would corrupt routing.
+    if (e.hash_size != path_hash_size) continue;
+
+    // Target-hash prefix match (compares the first target_hash_size bytes of the
+    // dest pubkey). 4-byte target_hash makes accidental cache collisions vanishingly
+    // unlikely (~1/4G per pair).
+    if (memcmp(e.dest_pubkey, target_hash, target_hash_size) != 0) continue;
+
+    // Skip explicitly excluded path (raw byte equality at hash_size granularity).
+    if (exclude_path != nullptr && exclude_path_size_bytes > 0) {
+      size_t entry_bytes = (size_t)e.hop_count * (size_t)e.hash_size;
+      if (entry_bytes == (size_t)exclude_path_size_bytes
+          && memcmp(e.path, exclude_path, exclude_path_size_bytes) == 0) {
+        continue;
+      }
     }
 
     candidates[n_cand++] = i;
@@ -168,12 +186,15 @@ bool RouteCache::getEntry(int idx, RouteEntry& out) const {
   return true;
 }
 
-int RouteCache::findExact(const uint8_t* dest_pubkey, const uint8_t* path, uint8_t hop_count) const {
+int RouteCache::findExact(const uint8_t* dest_pubkey, const uint8_t* path,
+                           uint8_t hop_count, uint8_t hash_size) const {
+  size_t path_bytes = (size_t)hop_count * (size_t)hash_size;
   for (int i = 0; i < _used; i++) {
     const RouteEntry& e = _entries[i];
     if (memcmp(e.dest_pubkey, dest_pubkey, PUB_KEY_SIZE) != 0) continue;
     if (e.hop_count != hop_count) continue;
-    if (hop_count > 0 && memcmp(e.path, path, hop_count) != 0) continue;
+    if (e.hash_size != hash_size) continue;
+    if (path_bytes > 0 && memcmp(e.path, path, path_bytes) != 0) continue;
     return i;
   }
   return -1;

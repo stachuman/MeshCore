@@ -767,9 +767,13 @@ void MyMesh::onControlDataRecv(mesh::Packet *packet) {
   // Consume PATH_OFFER (and any future neighbor RPCs we recognize) locally before
   // falling through to the existing PUSH_CODE_CONTROL_DATA forwarding to the app.
   // See PathProtocol.h for the framework rationale.
-  if (packet->payload_len >= NEIGHBOR_RPC_HEADER_SIZE
-      && (packet->payload[0] & 0xF0) == CTL_TYPE_NEIGHBOR_RPC) {
-    uint8_t rpc_op = packet->payload[4];
+  if (packet->payload_len >= NEIGHBOR_RPC_HEADER_MIN_SIZE
+      && (packet->payload[0] & NEIGHBOR_RPC_SUBTYPE_HIGH_NIBBLE) == CTL_TYPE_NEIGHBOR_RPC) {
+    // Variable header size: subtype + sender_hash[hash_size] + recipient + qid + rpc_op + payload_len
+    uint8_t hs = neighbor_rpc_hash_size(packet->payload[0]);
+    uint8_t hdr = neighbor_rpc_header_size(hs);
+    if (packet->payload_len < hdr) return;
+    uint8_t rpc_op = packet->payload[3 + hs];
     if (rpc_op == RPC_OP_PATH_OFFER) {
       onPathOfferRecv(packet);
       return;

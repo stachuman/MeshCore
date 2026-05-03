@@ -155,6 +155,7 @@ protected:
   void onSendTimeout() override;
 
   bool _path_query_enabled_for_send() const override { return _prefs.path_query_enabled != 0; }
+  uint8_t _path_hash_mode_for_send() const override { return _prefs.path_hash_mode; }
   uint16_t _path_query_timeout_ms_for_send() override {
     // Adaptive: cover REQ airtime + max repeater jitter (getRetransmitDelay max ≈ 2.5×airtime)
     // + OFFER airtime + small safety margin. Approx 5 × OFFER_airtime since REQ ≈ OFFER size.

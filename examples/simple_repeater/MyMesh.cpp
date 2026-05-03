@@ -637,16 +637,19 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
 
   // RouteCache update (Phase 1): the wire path is the trail of forwarders from origin to here.
   // Reverse it for storage so it can be used as a SOURCE-ROUTE to the origin from here.
+  // Reversal operates on whole hashes (groups of hash_size bytes), not individual bytes.
   uint8_t hop_count = packet->getPathHashCount();
   uint8_t hash_size = packet->getPathHashSize();
-  if (hash_size == 1 && hop_count <= ROUTE_CACHE_PATH_MAX) {
+  if (hash_size >= 1 && hash_size <= 3
+      && (size_t)hop_count * hash_size <= ROUTE_CACHE_PATH_MAX) {
     uint8_t reversed[ROUTE_CACHE_PATH_MAX];
     for (uint8_t i = 0; i < hop_count; i++) {
-      reversed[i] = packet->path[hop_count - 1 - i];
+      const uint8_t* src = &packet->path[(uint16_t)(hop_count - 1 - i) * hash_size];
+      memcpy(&reversed[(uint16_t)i * hash_size], src, hash_size);
     }
     // Capture SNR in int16_t so strong links (e.g. >+31 dB) don't overflow during storage.
     int16_t snr_x4 = (int16_t)(packet->getSNR() * 4.0f);
-    route_cache.observe(id.pub_key, reversed, hop_count, snr_x4,
+    route_cache.observe(id.pub_key, reversed, hop_count, hash_size, snr_x4,
                         getRTCClock()->getCurrentTime());
   }
 
@@ -838,22 +841,34 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       return;
     }
     putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
-  } else if ((type == CTL_TYPE_NEIGHBOR_RPC) && packet->payload_len >= NEIGHBOR_RPC_HEADER_SIZE) {
+  } else if (type == CTL_TYPE_NEIGHBOR_RPC
+             && packet->payload_len >= NEIGHBOR_RPC_HEADER_MIN_SIZE) {
     // --- BEGIN CTL_TYPE_NEIGHBOR_RPC dispatcher (Phase 2 — universal inter-router/companion RPC) ---
-    // Parse the 6-byte common header. See PathProtocol.h for the framework rationale:
-    // future neighbor protocols add new rpc_op values rather than burn fresh CTL_TYPE_* slots.
-    _rt_n_neighbor_rpc_recv++;
+    // The high nibble of the subtype is fixed at 0xC; bits 3..2 carry hash_size_minus_1
+    // (so the actual subtype byte is one of 0xC0/0xC4/0xC8 plus low op-flags). Parse
+    // the variable-size common header from there. See PathProtocol.h for the framework
+    // rationale: future neighbor protocols add new rpc_op values rather than burn fresh
+    // CTL_TYPE_* slots.
     uint8_t subtype_byte    = packet->payload[0];
-    uint8_t sender_hash     = packet->payload[1];
-    uint8_t recipient_hash  = packet->payload[2];
-    uint8_t query_id        = packet->payload[3];
-    uint8_t rpc_op          = packet->payload[4];
-    uint8_t payload_len     = packet->payload[5];
-    if (NEIGHBOR_RPC_HEADER_SIZE + (uint16_t)payload_len > packet->payload_len) return;
-    const uint8_t* rpc_payload = &packet->payload[NEIGHBOR_RPC_HEADER_SIZE];
+    uint8_t req_hash_size   = neighbor_rpc_hash_size(subtype_byte);   // 1, 2, or 3
+    uint8_t header_size     = neighbor_rpc_header_size(req_hash_size); // 6, 7, or 8
+    if (packet->payload_len < header_size) return;
+
+    _rt_n_neighbor_rpc_recv++;
+
+    // Header layout: [subtype][sender_hash * H][recipient_hash][query_id][rpc_op][payload_len]
+    const uint8_t* sender_hash = &packet->payload[1];
+    uint8_t recipient_hash     = packet->payload[1 + req_hash_size];
+    uint8_t query_id           = packet->payload[2 + req_hash_size];
+    uint8_t rpc_op             = packet->payload[3 + req_hash_size];
+    uint8_t payload_len        = packet->payload[4 + req_hash_size];
+    if ((uint16_t)header_size + payload_len > packet->payload_len) return;
+    const uint8_t* rpc_payload = &packet->payload[header_size];
 
     // Broadcast (recipient_hash == 0x00) → any reachable node may answer per rpc_op semantics.
-    // Addressed → only the matching recipient acts.
+    // Addressed → only the matching recipient acts. recipient_hash is always 1 byte
+    // regardless of the path-routing hash_size — it's enough for "is this for me?" when
+    // combined with query_id randomness.
     bool addressed_to_us = (recipient_hash == self_id.pub_key[0]);
     bool is_broadcast    = (recipient_hash == NEIGHBOR_RPC_BROADCAST_HASH);
 
@@ -870,54 +885,63 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       }
       _rt_n_path_req_recv++;
       // === RPC_OP_PATH_REQ payload ===
-      //   byte 0    : target_hash
-      //   byte 1..  : full_target (32 bytes) IF (subtype & PATH_REQ_FLAG_FULL_TARGET)
-      //   next      : exclude_len
-      //   next..    : exclude_path
+      //   byte 0..3 : target_hash (4 bytes, fixed width — see PathProtocol.h)
+      //   byte 4..  : full_target (32 bytes) IF (subtype & PATH_REQ_FLAG_FULL_TARGET)
+      //   next      : exclude_count (in HASHES, not bytes)
+      //   next..    : exclude_path (exclude_count * req_hash_size bytes)
       if (payload_len < PATH_REQ_PAYLOAD_MIN) return;
       bool has_full_hash = (subtype_byte & PATH_REQ_FLAG_FULL_TARGET) != 0;
       int p = 0;
-      uint8_t target_hash = rpc_payload[p++];
+      // target_hash bounds are guaranteed by the PATH_REQ_PAYLOAD_MIN gate above.
+      const uint8_t* target_hash = &rpc_payload[p];
+      p += PATH_REQ_TARGET_HASH_SIZE;
       const uint8_t* full_target = nullptr;
       if (has_full_hash) {
         if (p + PATH_REQ_FULL_TARGET_SIZE > payload_len) return;  // malformed
         full_target = &rpc_payload[p];
         p += PATH_REQ_FULL_TARGET_SIZE;
       }
-      if (p >= payload_len) return;  // missing exclude_len
-      uint8_t exclude_len = rpc_payload[p++];
-      if (exclude_len > PATH_REQ_EXCLUDE_MAX) return;
-      if (p + exclude_len > payload_len) return;  // truncated exclude_path
-      const uint8_t* exclude_path = exclude_len > 0 ? &rpc_payload[p] : nullptr;
+      if (p >= payload_len) return;  // missing exclude_count
+      uint8_t exclude_count = rpc_payload[p++];
+      uint16_t exclude_bytes = (uint16_t)exclude_count * req_hash_size;
+      if (exclude_bytes > PATH_REQ_EXCLUDE_BYTES_MAX) return;
+      if (p + exclude_bytes > payload_len) return;  // truncated exclude_path
+      const uint8_t* exclude_path = exclude_bytes > 0 ? &rpc_payload[p] : nullptr;
 
-      // Cache lookup
+      // Cache lookup. Match destination by full 4-byte target_hash (precision decoupled
+      // from path-routing hash_size); restrict candidates to entries whose stored hash_size
+      // matches the querier's so the path bytes are usable on the wire as-is.
       uint32_t now_secs = getRTCClock()->getCurrentTime();
       RouteEntry results[1];
-      int n = route_cache.lookup(target_hash, /*hash_size*/ 1,
-                                  exclude_path, exclude_len,
+      int n = route_cache.lookup(target_hash, PATH_REQ_TARGET_HASH_SIZE,
+                                  /*path_hash_size*/ req_hash_size,
+                                  exclude_path, (uint8_t)exclude_bytes,
                                   results, 1, now_secs);
       if (n == 0) {
         _rt_n_path_req_no_route++;
         return;  // we don't know; stay silent
       }
 
-      // If full_target was provided, confirm exact match (drops 1-byte-hash collisions)
+      // If full_target was provided, confirm exact match (drops 4-byte-hash collisions)
       if (full_target != nullptr
           && memcmp(results[0].dest_pubkey, full_target, PUB_KEY_SIZE) != 0) {
         return;  // different node despite hash-prefix match
       }
 
-      // Build PATH_OFFER (RPC_OP_PATH_OFFER, addressed back to the original querier)
+      // Build PATH_OFFER (RPC_OP_PATH_OFFER, addressed back to the original querier).
+      // Echo the same hash_size so the querier can splice the path bytes directly.
       uint8_t data[PATH_OFFER_MAX_BYTES];
       int j = 0;
-      data[j++] = CTL_TYPE_NEIGHBOR_RPC;        // common envelope, no flags for OFFER
-      data[j++] = self_id.pub_key[0];           // sender_hash = us (the responder); querier prepends to full path
-      data[j++] = sender_hash;                  // recipient_hash = original querier
+      data[j++] = neighbor_rpc_subtype(req_hash_size, /*op_flags*/ 0);
+      // sender_hash = us (the responder); querier prepends to full path. Width = req_hash_size.
+      memcpy(&data[j], self_id.pub_key, req_hash_size); j += req_hash_size;
+      data[j++] = sender_hash[0];               // recipient_hash = first byte of querier's sender_hash
       data[j++] = query_id;                     // echo for correlation
       data[j++] = RPC_OP_PATH_OFFER;
       uint8_t payload_len_idx = j++;            // patch up after we know the size
       int payload_start = j;
-      data[j++] = target_hash;
+      memcpy(&data[j], target_hash, PATH_REQ_TARGET_HASH_SIZE);
+      j += PATH_REQ_TARGET_HASH_SIZE;
       data[j++] = results[0].hop_count;
       // Saturate to int8_t range for the wire format (the OFFER field is 1 byte).
       // The score formula clamps the SNR contribution at 60 anyway (= ~+40 dB), so saturating
@@ -931,9 +955,11 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       if (age > 65535) age = 65535;
       uint16_t age_u16 = (uint16_t)age;
       memcpy(&data[j], &age_u16, 2); j += 2;
-      if (results[0].hop_count > 0) {
-        memcpy(&data[j], results[0].path, results[0].hop_count);
-        j += results[0].hop_count;
+      // results[0].hash_size == req_hash_size by the lookup's path_hash_size filter.
+      uint16_t path_bytes = (uint16_t)results[0].hop_count * req_hash_size;
+      if (path_bytes > 0) {
+        memcpy(&data[j], results[0].path, path_bytes);
+        j += path_bytes;
       }
       data[payload_len_idx] = (uint8_t)(j - payload_start);
 
@@ -947,7 +973,7 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
         sendZeroHop(resp, getRetransmitDelay(resp));
       }
     }
-    // Future rpc_op handlers dispatch from here — preserve the framework's "unknown op = drop" guarantee.
+    // Unknown rpc_op silently dropped — forward-compat (envelope was already parsed and counted).
     // --- END CTL_TYPE_NEIGHBOR_RPC dispatcher ---
   }
 }

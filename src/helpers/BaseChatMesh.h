@@ -8,6 +8,7 @@
 #define MAX_TEXT_LEN    (10*CIPHER_BLOCK_SIZE)  // must be LESS than (MAX_PACKET_PAYLOAD - 4 - CIPHER_MAC_SIZE - 1)
 
 #include "ContactInfo.h"
+#include "PathProtocol.h"
 
 #define MAX_SEARCH_RESULTS   8
 
@@ -78,12 +79,13 @@ class BaseChatMesh : public mesh::Mesh {
     bool     in_use;
     uint32_t deadline_millis;       // futureMillis() value
     uint8_t  query_id;
-    uint8_t  target_hash;
+    uint8_t  target_hash[PATH_REQ_TARGET_HASH_SIZE];   // 4-byte dest prefix sent in PATH_REQ
+    uint8_t  query_hash_size;       // 1..3 — path-byte width chosen for this query
     int      contact_idx;           // index into contacts[]
     int16_t  best_score;            // -1 = no offer yet
-    uint8_t  best_responder_hash;
-    uint8_t  best_path_len;
-    uint8_t  best_path[16];         // matches PATH_OFFER_PATH_MAX
+    uint8_t  best_responder_hash[NEIGHBOR_RPC_MAX_HASH_SIZE];  // first hop, query_hash_size bytes used
+    uint8_t  best_path_len;         // hop count in the OFFER's path field (in HASHES)
+    uint8_t  best_path[PATH_OFFER_PATH_BYTES_MAX];     // raw bytes from OFFER, up to 16
     // Deferred-send state
     mesh::Packet* deferred_pkt;     // owned; built by sender, sent on resolution
     uint32_t pending_expected_ack;
@@ -161,7 +163,7 @@ protected:
   void onPathOfferRecv(mesh::Packet* packet);
   void checkPendingQueries();   // call from MyMesh::loop() periodically
   PendingQuery* findPendingSlot();
-  PendingQuery* matchPending(uint8_t querier_hash, uint8_t query_id, uint8_t target_hash);
+  PendingQuery* matchPending(uint8_t query_id, const uint8_t* target_hash);
 
   // Subclasses override to surface NodePrefs.path_query_timeout_ms.
   // Non-const because subclasses may compute the timeout from the radio's airtime
@@ -170,6 +172,10 @@ protected:
 
   // Subclasses override to surface NodePrefs.path_query_enabled.
   virtual bool _path_query_enabled_for_send() const { return false; }
+
+  // Subclasses override to surface NodePrefs.path_hash_mode (0..2 → 1..3-byte hashes).
+  // Default 0 = 1-byte hashes for nodes that don't track this preference.
+  virtual uint8_t _path_hash_mode_for_send() const { return 0; }
 
   // storage concepts, for sub-classes to override/implement
   virtual int  getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) { return 0; }  // not implemented
