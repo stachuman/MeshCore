@@ -1031,15 +1031,20 @@ bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* 
     }
   }
 
-  // Build PATH_REQ
+  // Build PATH_REQ as a CTL_TYPE_NEIGHBOR_RPC packet (universal envelope; see PathProtocol.h).
+  // Layout: 6-byte common header + 2-byte payload (target_hash + exclude_len=0).
   uint8_t qid = (uint8_t)getRNG()->nextInt(1, 256);   // 1..255 (avoid 0 as sentinel)
-  uint8_t req[PATH_REQ_HEADER_SIZE + 1];   // header + exclude_len=0; no full_target in v1
+  uint8_t req[NEIGHBOR_RPC_HEADER_SIZE + PATH_REQ_PAYLOAD_MIN];
   int j = 0;
-  req[j++] = CTL_TYPE_PATH_REQ;             // no flags set: 1-byte target hash, no exclude
-  req[j++] = self_id.pub_key[0];            // querier_hash
-  req[j++] = qid;
-  req[j++] = recipient.id.pub_key[0];       // target_hash
-  req[j++] = 0;                             // exclude_len = 0
+  req[j++] = CTL_TYPE_NEIGHBOR_RPC;            // no flags set in low nibble (no full_target in v1)
+  req[j++] = self_id.pub_key[0];               // sender_hash = querier
+  req[j++] = NEIGHBOR_RPC_BROADCAST_HASH;      // recipient_hash = unaddressed (any neighbor may answer)
+  req[j++] = qid;                              // query_id for correlation
+  req[j++] = RPC_OP_PATH_REQ;
+  req[j++] = PATH_REQ_PAYLOAD_MIN;             // payload_len = 2 (target_hash + exclude_len)
+  // payload:
+  req[j++] = recipient.id.pub_key[0];          // target_hash
+  req[j++] = 0;                                // exclude_len = 0 (Phase 2 v1 — no breakage retry yet)
 
   mesh::Packet* req_pkt = createControlData(req, j);
   if (req_pkt == nullptr) {
@@ -1064,25 +1069,37 @@ bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* 
 }
 
 void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
-  // Parse PATH_OFFER (per PathProtocol.h with responder_hash extension).
-  if (packet->payload_len < PATH_OFFER_HEADER_SIZE) return;
-  if ((packet->payload[0] & 0xF0) != CTL_TYPE_PATH_OFFER) return;
+  // Parse a CTL_TYPE_NEIGHBOR_RPC packet carrying RPC_OP_PATH_OFFER.
+  // See PathProtocol.h for the universal envelope layout.
+  if (packet->payload_len < NEIGHBOR_RPC_HEADER_SIZE) return;
+  if ((packet->payload[0] & 0xF0) != CTL_TYPE_NEIGHBOR_RPC) return;
 
-  int i = 1;
-  uint8_t querier_hash   = packet->payload[i++];
-  uint8_t query_id       = packet->payload[i++];
-  uint8_t target_hash    = packet->payload[i++];
-  uint8_t responder_hash = packet->payload[i++];
-  uint8_t hop_count      = packet->payload[i++];
-  int8_t  last_snr_x4    = (int8_t)packet->payload[i++];
+  // Common 6-byte header
+  uint8_t sender_hash    = packet->payload[1];   // = the responder, becomes the first hop in our path
+  uint8_t recipient_hash = packet->payload[2];   // should equal our pubkey prefix
+  uint8_t query_id       = packet->payload[3];
+  uint8_t rpc_op         = packet->payload[4];
+  uint8_t payload_len    = packet->payload[5];
+
+  if (rpc_op != RPC_OP_PATH_OFFER) return;
+  if (recipient_hash != self_id.pub_key[0]) return;   // not addressed to us
+  if ((uint16_t)NEIGHBOR_RPC_HEADER_SIZE + payload_len > packet->payload_len) return;
+  if (payload_len < PATH_OFFER_PAYLOAD_MIN) return;
+
+  // OFFER payload
+  const uint8_t* rpc_payload = &packet->payload[NEIGHBOR_RPC_HEADER_SIZE];
+  uint8_t target_hash = rpc_payload[0];
+  uint8_t hop_count   = rpc_payload[1];
+  int8_t  last_snr_x4 = (int8_t)rpc_payload[2];
   uint16_t age_secs;
-  memcpy(&age_secs, &packet->payload[i], 2); i += 2;
+  memcpy(&age_secs, &rpc_payload[3], 2);
 
   if (hop_count > PATH_OFFER_PATH_MAX) return;
-  if (i + hop_count > packet->payload_len) return;
+  if ((uint16_t)PATH_OFFER_PAYLOAD_MIN + hop_count > payload_len) return;
 
-  PendingQuery* p = matchPending(querier_hash, query_id, target_hash);
-  if (p == nullptr) return;   // not for us, or query already resolved
+  // Match pending query — recipient_hash already validated above, so pass our own hash
+  PendingQuery* p = matchPending(self_id.pub_key[0], query_id, target_hash);
+  if (p == nullptr) return;   // query already resolved or never existed
 
   // Score: combine remote score with our local link quality to the responder.
   // Same formula shape as RouteCache::computeScore; recompute since we only have raw fields.
@@ -1100,10 +1117,10 @@ void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
 
   if ((int16_t)score > p->best_score) {
     p->best_score = (int16_t)score;
-    p->best_responder_hash = responder_hash;
+    p->best_responder_hash = sender_hash;   // sender of the OFFER becomes the first hop we use
     p->best_path_len = hop_count;
     if (hop_count > 0) {
-      memcpy(p->best_path, &packet->payload[i], hop_count);
+      memcpy(p->best_path, &rpc_payload[PATH_OFFER_PAYLOAD_MIN], hop_count);
     }
   }
 }

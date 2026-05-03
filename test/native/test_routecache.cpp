@@ -326,17 +326,32 @@ TEST(test_eviction_at_capacity) {
 #include "helpers/PathProtocol.h"
 
 TEST(test_path_protocol_constants_sane) {
-    // Subtypes are in the zero-hop range and don't collide with existing DISCOVER subtypes.
-    static_assert((CTL_TYPE_PATH_REQ & 0x80) != 0, "must be zero-hop CONTROL subtype");
-    static_assert((CTL_TYPE_PATH_OFFER & 0x80) != 0, "must be zero-hop CONTROL subtype");
-    static_assert(CTL_TYPE_PATH_REQ != 0x80, "collides with DISCOVER_REQ");
-    static_assert(CTL_TYPE_PATH_REQ != 0x90, "collides with DISCOVER_RESP");
-    static_assert(CTL_TYPE_PATH_OFFER != 0x80, "collides with DISCOVER_REQ");
-    static_assert(CTL_TYPE_PATH_OFFER != 0x90, "collides with DISCOVER_RESP");
+    // CTL_TYPE_NEIGHBOR_RPC subtype is in the zero-hop range and doesn't collide
+    // with existing DISCOVER subtypes (0x80, 0x90).
+    static_assert((CTL_TYPE_NEIGHBOR_RPC & 0x80) != 0, "must be zero-hop CONTROL subtype");
+    static_assert(CTL_TYPE_NEIGHBOR_RPC != 0x80, "collides with DISCOVER_REQ");
+    static_assert(CTL_TYPE_NEIGHBOR_RPC != 0x90, "collides with DISCOVER_RESP");
 
-    // Wire-budget check vs MAX_PACKET_PAYLOAD=184
-    static_assert(PATH_REQ_MAX_BYTES <= 184, "PATH_REQ exceeds payload");
-    static_assert(PATH_OFFER_MAX_BYTES <= 184, "PATH_OFFER exceeds payload");
+    // rpc_op values must be in the feature range (0x01..0x7F); 0x80..0xFF reserved
+    // for protocol version bumps.
+    static_assert(RPC_OP_PATH_REQ   >= 0x01 && RPC_OP_PATH_REQ   <= 0x7F, "RPC_OP_PATH_REQ in feature range");
+    static_assert(RPC_OP_PATH_OFFER >= 0x01 && RPC_OP_PATH_OFFER <= 0x7F, "RPC_OP_PATH_OFFER in feature range");
+    static_assert(RPC_OP_PATH_REQ != RPC_OP_PATH_OFFER, "rpc_ops must not collide");
+
+    // Common header is exactly 6 bytes (subtype, sender_hash, recipient_hash, query_id, rpc_op, payload_len).
+    static_assert(NEIGHBOR_RPC_HEADER_SIZE == 6, "common header must be 6 bytes");
+
+    // Per-op payload size sanity.
+    static_assert(PATH_REQ_PAYLOAD_MIN  == 2, "PATH_REQ minimum payload = target_hash + exclude_len");
+    static_assert(PATH_OFFER_PAYLOAD_MIN == 5, "PATH_OFFER minimum payload = target+hops+snr+age");
+    static_assert(PATH_REQ_PAYLOAD_MAX  == 1 + PATH_REQ_FULL_TARGET_SIZE + 1 + PATH_REQ_EXCLUDE_MAX,
+                  "PATH_REQ max payload arithmetic mismatch");
+    static_assert(PATH_OFFER_PAYLOAD_MAX == PATH_OFFER_PAYLOAD_MIN + PATH_OFFER_PATH_MAX,
+                  "PATH_OFFER max payload arithmetic mismatch");
+
+    // Wire-budget check vs MAX_PACKET_PAYLOAD=184.
+    static_assert(PATH_REQ_MAX_BYTES   <= 184, "PATH_REQ exceeds payload budget");
+    static_assert(PATH_OFFER_MAX_BYTES <= 184, "PATH_OFFER exceeds payload budget");
     assert(true);
 }
 

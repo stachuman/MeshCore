@@ -763,10 +763,18 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
-  // Phase 2 cold-start fix: dispatch PATH_OFFER before existing PUSH_CODE_CONTROL_DATA
-  // forwarding so the offer is consumed locally rather than handed to the app.
-  if (packet->payload_len >= 1 && (packet->payload[0] & 0xF0) == CTL_TYPE_PATH_OFFER) {
-    onPathOfferRecv(packet);
+  // Phase 2 universal inter-router/companion RPC envelope (CTL_TYPE_NEIGHBOR_RPC = 0xC0).
+  // Consume PATH_OFFER (and any future neighbor RPCs we recognize) locally before
+  // falling through to the existing PUSH_CODE_CONTROL_DATA forwarding to the app.
+  // See PathProtocol.h for the framework rationale.
+  if (packet->payload_len >= NEIGHBOR_RPC_HEADER_SIZE
+      && (packet->payload[0] & 0xF0) == CTL_TYPE_NEIGHBOR_RPC) {
+    uint8_t rpc_op = packet->payload[4];
+    if (rpc_op == RPC_OP_PATH_OFFER) {
+      onPathOfferRecv(packet);
+      return;
+    }
+    // Future RPCs handled here. Unknown rpc_op => drop silently (forward-compat).
     return;
   }
 

@@ -837,71 +837,98 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       return;
     }
     putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
-  } else if ((type == CTL_TYPE_PATH_REQ) && packet->payload_len >= PATH_REQ_HEADER_SIZE
-             && !_prefs.disable_fwd && path_req_limiter.allow(rtc_clock.getCurrentTime())) {
-    // --- BEGIN PATH_REQ handler (Phase 2) ---
-    // Parse request
-    uint8_t subtype_byte = packet->payload[0];
-    bool has_full_hash = (subtype_byte & PATH_REQ_FLAG_FULL_TARGET) != 0;
-    int i = 1;
-    uint8_t querier_hash = packet->payload[i++];
-    uint8_t query_id     = packet->payload[i++];
-    uint8_t target_hash  = packet->payload[i++];
-    const uint8_t* full_target = nullptr;
-    if (has_full_hash) {
-      if (i + PATH_REQ_FULL_TARGET_SIZE > packet->payload_len) return;  // malformed
-      full_target = &packet->payload[i];
-      i += PATH_REQ_FULL_TARGET_SIZE;
-    }
-    if (i >= packet->payload_len) return;  // missing exclude_len
-    uint8_t exclude_len = packet->payload[i++];
-    if (exclude_len > PATH_REQ_EXCLUDE_MAX) return;  // out of range
-    if (i + exclude_len > packet->payload_len) return;  // truncated
-    const uint8_t* exclude_path = exclude_len > 0 ? &packet->payload[i] : nullptr;
+  } else if ((type == CTL_TYPE_NEIGHBOR_RPC) && packet->payload_len >= NEIGHBOR_RPC_HEADER_SIZE) {
+    // --- BEGIN CTL_TYPE_NEIGHBOR_RPC dispatcher (Phase 2 — universal inter-router/companion RPC) ---
+    // Parse the 6-byte common header. See PathProtocol.h for the framework rationale:
+    // future neighbor protocols add new rpc_op values rather than burn fresh CTL_TYPE_* slots.
+    uint8_t subtype_byte    = packet->payload[0];
+    uint8_t sender_hash     = packet->payload[1];
+    uint8_t recipient_hash  = packet->payload[2];
+    uint8_t query_id        = packet->payload[3];
+    uint8_t rpc_op          = packet->payload[4];
+    uint8_t payload_len     = packet->payload[5];
+    if (NEIGHBOR_RPC_HEADER_SIZE + (uint16_t)payload_len > packet->payload_len) return;  // truncated
+    const uint8_t* rpc_payload = &packet->payload[NEIGHBOR_RPC_HEADER_SIZE];
 
-    // Cache lookup
-    uint32_t now_secs = getRTCClock()->getCurrentTime();
-    RouteEntry results[1];
-    int n = route_cache.lookup(target_hash, /*hash_size*/ 1,
-                                exclude_path, exclude_len,
-                                results, 1, now_secs);
-    if (n == 0) return;  // we don't know; stay silent
+    // For a broadcast request (recipient_hash == NEIGHBOR_RPC_BROADCAST_HASH), any node may
+    // act per rpc_op semantics. For an addressed request, only the matching recipient acts.
+    bool addressed_to_us = (recipient_hash == self_id.pub_key[0]);
+    bool is_broadcast    = (recipient_hash == NEIGHBOR_RPC_BROADCAST_HASH);
 
-    // If full_target was provided, confirm exact match (drops 1-byte-hash collisions)
-    if (full_target != nullptr
-        && memcmp(results[0].dest_pubkey, full_target, PUB_KEY_SIZE) != 0) {
-      return;  // different node despite hash-prefix match
-    }
+    if (rpc_op == RPC_OP_PATH_REQ
+        && (addressed_to_us || is_broadcast)
+        && !_prefs.disable_fwd
+        && path_req_limiter.allow(rtc_clock.getCurrentTime())) {
+      // === RPC_OP_PATH_REQ payload ===
+      //   byte 0    : target_hash
+      //   byte 1..  : full_target (32 bytes) IF (subtype & PATH_REQ_FLAG_FULL_TARGET)
+      //   next      : exclude_len
+      //   next..    : exclude_path
+      if (payload_len < PATH_REQ_PAYLOAD_MIN) return;
+      bool has_full_hash = (subtype_byte & PATH_REQ_FLAG_FULL_TARGET) != 0;
+      int p = 0;
+      uint8_t target_hash = rpc_payload[p++];
+      const uint8_t* full_target = nullptr;
+      if (has_full_hash) {
+        if (p + PATH_REQ_FULL_TARGET_SIZE > payload_len) return;  // malformed
+        full_target = &rpc_payload[p];
+        p += PATH_REQ_FULL_TARGET_SIZE;
+      }
+      if (p >= payload_len) return;  // missing exclude_len
+      uint8_t exclude_len = rpc_payload[p++];
+      if (exclude_len > PATH_REQ_EXCLUDE_MAX) return;
+      if (p + exclude_len > payload_len) return;  // truncated exclude_path
+      const uint8_t* exclude_path = exclude_len > 0 ? &rpc_payload[p] : nullptr;
 
-    // Build PATH_OFFER
-    uint8_t data[PATH_OFFER_MAX_BYTES];
-    int j = 0;
-    data[j++] = CTL_TYPE_PATH_OFFER;
-    data[j++] = querier_hash;
-    data[j++] = query_id;
-    data[j++] = target_hash;
-    data[j++] = self_id.pub_key[0];   // responder_hash (PATH_HASH_SIZE prefix)
-    data[j++] = results[0].hop_count;
-    data[j++] = (uint8_t)results[0].last_snr_x4;
-    uint32_t age = (now_secs >= results[0].last_seen_secs)
-                     ? (now_secs - results[0].last_seen_secs) : 0;
-    if (age > 65535) age = 65535;
-    uint16_t age_u16 = (uint16_t)age;
-    memcpy(&data[j], &age_u16, 2); j += 2;
-    if (results[0].hop_count > 0) {
-      memcpy(&data[j], results[0].path, results[0].hop_count);
-      j += results[0].hop_count;
-    }
+      // Cache lookup
+      uint32_t now_secs = getRTCClock()->getCurrentTime();
+      RouteEntry results[1];
+      int n = route_cache.lookup(target_hash, /*hash_size*/ 1,
+                                  exclude_path, exclude_len,
+                                  results, 1, now_secs);
+      if (n == 0) return;  // we don't know; stay silent
 
-    auto resp = createControlData(data, j);
-    if (resp) {
-      // Multi-responder jitter spread, scaled to OFFER airtime by getRetransmitDelay
-      // (range 0..~2.5 * airtime). Tighter than the *4 used for DISCOVER because PATH_REQ
-      // typically reaches few responders (the querier's 1-hop neighborhood) — heavy spread
-      // pushes the OFFER past the companion's adaptive timeout window at high SF.
-      sendZeroHop(resp, getRetransmitDelay(resp));
+      // If full_target was provided, confirm exact match (drops 1-byte-hash collisions)
+      if (full_target != nullptr
+          && memcmp(results[0].dest_pubkey, full_target, PUB_KEY_SIZE) != 0) {
+        return;  // different node despite hash-prefix match
+      }
+
+      // Build PATH_OFFER (RPC_OP_PATH_OFFER, addressed back to the original querier)
+      uint8_t data[PATH_OFFER_MAX_BYTES];
+      int j = 0;
+      data[j++] = CTL_TYPE_NEIGHBOR_RPC;        // common envelope, no flags for OFFER
+      data[j++] = self_id.pub_key[0];           // sender_hash = us (the responder); querier prepends to full path
+      data[j++] = sender_hash;                  // recipient_hash = original querier
+      data[j++] = query_id;                     // echo for correlation
+      data[j++] = RPC_OP_PATH_OFFER;
+      uint8_t payload_len_idx = j++;            // patch up after we know the size
+      int payload_start = j;
+      data[j++] = target_hash;
+      data[j++] = results[0].hop_count;
+      data[j++] = (uint8_t)results[0].last_snr_x4;
+      uint32_t age = (now_secs >= results[0].last_seen_secs)
+                       ? (now_secs - results[0].last_seen_secs) : 0;
+      if (age > 65535) age = 65535;
+      uint16_t age_u16 = (uint16_t)age;
+      memcpy(&data[j], &age_u16, 2); j += 2;
+      if (results[0].hop_count > 0) {
+        memcpy(&data[j], results[0].path, results[0].hop_count);
+        j += results[0].hop_count;
+      }
+      data[payload_len_idx] = (uint8_t)(j - payload_start);
+
+      auto resp = createControlData(data, j);
+      if (resp) {
+        // Multi-responder jitter spread, scaled to OFFER airtime by getRetransmitDelay
+        // (range 0..~2.5 * airtime). Tighter than the *4 used for DISCOVER because PATH_REQ
+        // typically reaches few responders (the querier's 1-hop neighborhood) — heavy spread
+        // pushes the OFFER past the companion's adaptive timeout window at high SF.
+        sendZeroHop(resp, getRetransmitDelay(resp));
+      }
     }
-    // --- END PATH_REQ handler ---
+    // Future rpc_op handlers dispatch from here — preserve the framework's "unknown op = drop" guarantee.
+    // --- END CTL_TYPE_NEIGHBOR_RPC dispatcher ---
   }
 }
 
