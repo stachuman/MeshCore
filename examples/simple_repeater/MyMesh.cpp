@@ -644,7 +644,8 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
     for (uint8_t i = 0; i < hop_count; i++) {
       reversed[i] = packet->path[hop_count - 1 - i];
     }
-    int8_t snr_x4 = (int8_t)(packet->getSNR() * 4.0f);
+    // Capture SNR in int16_t so strong links (e.g. >+31 dB) don't overflow during storage.
+    int16_t snr_x4 = (int16_t)(packet->getSNR() * 4.0f);
     route_cache.observe(id.pub_key, reversed, hop_count, snr_x4,
                         getRTCClock()->getCurrentTime());
   }
@@ -918,7 +919,13 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       int payload_start = j;
       data[j++] = target_hash;
       data[j++] = results[0].hop_count;
-      data[j++] = (uint8_t)results[0].last_snr_x4;
+      // Saturate to int8_t range for the wire format (the OFFER field is 1 byte).
+      // The score formula clamps the SNR contribution at 60 anyway (= ~+40 dB), so saturating
+      // at +31.75 dB only marginally under-represents very strong links — acceptable.
+      int16_t s16 = results[0].last_snr_x4;
+      if (s16 > 127) s16 = 127;
+      if (s16 < -128) s16 = -128;
+      data[j++] = (uint8_t)(int8_t)s16;
       uint32_t age = (now_secs >= results[0].last_seen_secs)
                        ? (now_secs - results[0].last_seen_secs) : 0;
       if (age > 65535) age = 65535;

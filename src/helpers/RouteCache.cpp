@@ -5,7 +5,7 @@ RouteCache::RouteCache(uint32_t ttl_secs) : _used(0), _ttl_secs(ttl_secs) {
 }
 
 void RouteCache::observe(const uint8_t* dest_pubkey, const uint8_t* path,
-                          uint8_t hop_count, int8_t snr_x4, uint32_t now_secs) {
+                          uint8_t hop_count, int16_t snr_x4, uint32_t now_secs) {
   if (hop_count > ROUTE_CACHE_PATH_MAX) {
     return;  // path too long to store; silently drop
   }
@@ -34,11 +34,12 @@ void RouteCache::observe(const uint8_t* dest_pubkey, const uint8_t* path,
   if (hop_count < ROUTE_CACHE_PATH_MAX) {
     memset(&e.path[hop_count], 0, ROUTE_CACHE_PATH_MAX - hop_count);
   }
+  e._pad1 = 0;
   e.last_snr_x4 = snr_x4;
   e.n_seen = 1;
+  e._pad2 = 0;
   e.first_seen_secs = now_secs;
   e.last_seen_secs = now_secs;
-  memset(e._reserved, 0, sizeof(e._reserved));
 }
 
 int RouteCache::lookup(uint8_t dest_hash, uint8_t hash_size,
@@ -63,6 +64,27 @@ int RouteCache::lookup(uint8_t dest_hash, uint8_t hash_size,
     }
 
     candidates[n_cand++] = i;
+  }
+
+  // Hash-prefix ambiguity gate: if the surviving candidates point to MULTIPLE
+  // distinct destination pubkeys, the prefix doesn't uniquely identify a node
+  // and confidently returning any one of them risks routing the caller's traffic
+  // to the wrong destination (silent message loss). Refuse to answer; the caller
+  // will fall through to flood, which uses the real network paths.
+  //
+  // Caveat: legitimate multi-path entries (same dest_pubkey, different path bytes)
+  // are NOT ambiguous — distinctness is by full 32-byte dest_pubkey comparison.
+  //
+  // The PATH_REQ_FLAG_FULL_TARGET protocol mechanism lets a future caller pass
+  // the full 32-byte pubkey when it really needs disambiguation; the responder
+  // can then exact-match before answering. Phase 2 callers don't use it yet.
+  if (n_cand >= 2) {
+    const uint8_t* first_dest = _entries[candidates[0]].dest_pubkey;
+    for (int k = 1; k < n_cand; k++) {
+      if (memcmp(first_dest, _entries[candidates[k]].dest_pubkey, PUB_KEY_SIZE) != 0) {
+        return 0;  // ambiguous — stay silent
+      }
+    }
   }
 
   // Selection sort by score descending.

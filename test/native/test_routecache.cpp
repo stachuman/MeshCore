@@ -172,6 +172,54 @@ TEST(test_lookup_exclude_no_match_returns_all) {
     assert(n == 1);
 }
 
+TEST(test_lookup_ambiguous_prefix_returns_zero) {
+    // Two cache entries with the SAME 1-byte hash prefix but DIFFERENT full pubkeys.
+    // A 1-byte-hash lookup would otherwise pick one and route the caller's traffic
+    // to the wrong destination (silent message loss). The ambiguity gate must return 0
+    // so the caller falls through to flood (which uses the real network paths).
+    RouteCache cache;
+    uint8_t key_alice[PUB_KEY_SIZE]; fillKey(key_alice, 0xAA);
+    key_alice[1] = 0x01;   // distinguish full pubkeys past the prefix
+    uint8_t key_bob[PUB_KEY_SIZE];   fillKey(key_bob, 0xAA);
+    key_bob[1]   = 0x02;   // same first byte, different at byte 1
+    uint8_t path_a[1] = { 0x01 };
+    uint8_t path_b[1] = { 0x02 };
+    cache.observe(key_alice, path_a, 1, /*snr*/ 4, /*ts*/ 1000);
+    cache.observe(key_bob,   path_b, 1, /*snr*/ 4, /*ts*/ 1000);
+
+    RouteEntry results[4];
+    int n = cache.lookup(0xAA, /*hash_size*/ 1, nullptr, 0, results, 4, 1000);
+    assert(n == 0);   // ambiguous → silent; caller floods, real network resolves it
+}
+
+TEST(test_lookup_same_dest_multipath_not_ambiguous) {
+    // Two cache entries pointing to the SAME destination via different paths.
+    // This is the legitimate multi-path case — must NOT be flagged as ambiguous.
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
+    uint8_t path_a[2] = { 0x10, 0x20 };
+    uint8_t path_b[2] = { 0x30, 0x40 };
+    cache.observe(key, path_a, 2, 4, 1000);
+    cache.observe(key, path_b, 2, 8, 1100);   // same dest, fresher and stronger
+
+    RouteEntry results[4];
+    int n = cache.lookup(0xAA, 1, nullptr, 0, results, 4, 1100);
+    assert(n == 2);   // both paths returned; ambiguity gate doesn't fire on same-dest
+}
+
+TEST(test_lookup_int16_snr_no_overflow) {
+    // Strong-SNR links (e.g. +50 dB) used to overflow int8_t snr_x4 (50*4=200 → -56).
+    // After Fix 2 (widen to int16_t), the stored SNR survives intact.
+    RouteCache cache;
+    uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xCC);
+    uint8_t path[1] = { 0x55 };
+    cache.observe(key, path, 1, /*snr_x4*/ 200, /*ts*/ 1000);   // = +50 dB
+
+    RouteEntry e;
+    assert(cache.getEntry(0, e));
+    assert(e.last_snr_x4 == 200);   // not -56 (overflow)
+}
+
 TEST(test_lookup_exclude_different_length_no_match) {
     RouteCache cache;
     uint8_t key[PUB_KEY_SIZE]; fillKey(key, 0xAA);
