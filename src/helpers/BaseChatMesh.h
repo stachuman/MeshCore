@@ -90,6 +90,15 @@ class BaseChatMesh : public mesh::Mesh {
   };
   PendingQuery _pending_queries[MAX_PENDING_QUERIES];
 
+  // Phase 2 routing telemetry — drives tuning decisions (timeout, jitter, gates).
+  // See PathProtocol.h for the universal RPC envelope these counters cover.
+  uint32_t _rt_n_path_query_sent;            // tryQueryThenSend emitted a PATH_REQ
+  uint32_t _rt_n_path_offer_recv;            // PATH_OFFER inbound (matched OR unmatched)
+  uint32_t _rt_n_path_offer_unmatched;       //   of which: no PendingQuery slot matched
+  uint32_t _rt_n_path_query_resolved_direct; // pending → installed offer path → sendDirect
+  uint32_t _rt_n_path_query_resolved_flood;  // pending → no offer arrived → sendFloodScoped
+  uint32_t _rt_n_path_query_resolved_drop;   // pending → contact disappeared, packet dropped
+
   mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char *text, uint32_t& expected_ack);
   void sendAckTo(const ContactInfo& dest, uint32_t ack_hash);
 
@@ -106,6 +115,12 @@ protected:
     _pendingLoopback = NULL;
     memset(connections, 0, sizeof(connections));
     memset(_pending_queries, 0, sizeof(_pending_queries));
+    _rt_n_path_query_sent = 0;
+    _rt_n_path_offer_recv = 0;
+    _rt_n_path_offer_unmatched = 0;
+    _rt_n_path_query_resolved_direct = 0;
+    _rt_n_path_query_resolved_flood = 0;
+    _rt_n_path_query_resolved_drop = 0;
   }
 
   void bootstrapRTCfromContacts();
@@ -181,6 +196,11 @@ protected:
   void checkConnections();
 
 public:
+  // Phase 2 routing telemetry — populates the routing counters; subclasses (or the orchestrator)
+  // surface via CLI. Single-line "key=value" format chosen for log-parseability and small CLI buffers.
+  void formatRoutingStatsReplyBase(char* reply, size_t cap);
+  void resetRoutingStats();
+
   mesh::Packet* createSelfAdvert(const char* name);
   mesh::Packet* createSelfAdvert(const char* name, double lat, double lon);
   int  sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack, uint32_t& est_timeout);

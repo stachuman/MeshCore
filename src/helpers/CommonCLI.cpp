@@ -264,6 +264,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       }
     } else if (memcmp(command, "neighbors", 9) == 0) {
       _callbacks->formatNeighborsReply(reply);
+    } else if (memcmp(command, "routing.stats", 13) == 0) {
+      _callbacks->formatRoutingStatsReply(reply);
     } else if (memcmp(command, "routes", 6) == 0) {
       _callbacks->formatRoutesReply(reply);
     } else if (memcmp(command, "neighbor.remove ", 16) == 0) {

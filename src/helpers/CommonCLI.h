@@ -85,6 +85,10 @@ public:
     // no op by default; overridden by repeater roles that own a RouteCache
     if (reply) reply[0] = '\0';
   };
+  virtual void formatRoutingStatsReply(char *reply) {
+    // no op by default; overridden by roles participating in routing telemetry
+    if (reply) reply[0] = '\0';
+  };
   virtual void removeNeighbor(const uint8_t* pubkey, int key_len) {
     // no op by default
   };

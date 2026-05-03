@@ -841,24 +841,33 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
     // --- BEGIN CTL_TYPE_NEIGHBOR_RPC dispatcher (Phase 2 — universal inter-router/companion RPC) ---
     // Parse the 6-byte common header. See PathProtocol.h for the framework rationale:
     // future neighbor protocols add new rpc_op values rather than burn fresh CTL_TYPE_* slots.
+    _rt_n_neighbor_rpc_recv++;
     uint8_t subtype_byte    = packet->payload[0];
     uint8_t sender_hash     = packet->payload[1];
     uint8_t recipient_hash  = packet->payload[2];
     uint8_t query_id        = packet->payload[3];
     uint8_t rpc_op          = packet->payload[4];
     uint8_t payload_len     = packet->payload[5];
-    if (NEIGHBOR_RPC_HEADER_SIZE + (uint16_t)payload_len > packet->payload_len) return;  // truncated
+    if (NEIGHBOR_RPC_HEADER_SIZE + (uint16_t)payload_len > packet->payload_len) return;
     const uint8_t* rpc_payload = &packet->payload[NEIGHBOR_RPC_HEADER_SIZE];
 
-    // For a broadcast request (recipient_hash == NEIGHBOR_RPC_BROADCAST_HASH), any node may
-    // act per rpc_op semantics. For an addressed request, only the matching recipient acts.
+    // Broadcast (recipient_hash == 0x00) → any reachable node may answer per rpc_op semantics.
+    // Addressed → only the matching recipient acts.
     bool addressed_to_us = (recipient_hash == self_id.pub_key[0]);
     bool is_broadcast    = (recipient_hash == NEIGHBOR_RPC_BROADCAST_HASH);
 
-    if (rpc_op == RPC_OP_PATH_REQ
-        && (addressed_to_us || is_broadcast)
-        && !_prefs.disable_fwd
-        && path_req_limiter.allow(rtc_clock.getCurrentTime())) {
+    if (rpc_op == RPC_OP_PATH_REQ && (addressed_to_us || is_broadcast)) {
+      // Each PATH_REQ goes to exactly one telemetry bucket so stats reveal where requests
+      // were dropped and why.
+      if (_prefs.disable_fwd) {
+        _rt_n_path_req_disable_fwd++;
+        return;
+      }
+      if (!path_req_limiter.allow(rtc_clock.getCurrentTime())) {
+        _rt_n_path_req_rate_limited++;
+        return;
+      }
+      _rt_n_path_req_recv++;
       // === RPC_OP_PATH_REQ payload ===
       //   byte 0    : target_hash
       //   byte 1..  : full_target (32 bytes) IF (subtype & PATH_REQ_FLAG_FULL_TARGET)
@@ -886,7 +895,10 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       int n = route_cache.lookup(target_hash, /*hash_size*/ 1,
                                   exclude_path, exclude_len,
                                   results, 1, now_secs);
-      if (n == 0) return;  // we don't know; stay silent
+      if (n == 0) {
+        _rt_n_path_req_no_route++;
+        return;  // we don't know; stay silent
+      }
 
       // If full_target was provided, confirm exact match (drops 1-byte-hash collisions)
       if (full_target != nullptr
@@ -920,6 +932,7 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
 
       auto resp = createControlData(data, j);
       if (resp) {
+        _rt_n_path_req_offered++;
         // Multi-responder jitter spread, scaled to OFFER airtime by getRetransmitDelay
         // (range 0..~2.5 * airtime). Tighter than the *4 used for DISCOVER because PATH_REQ
         // typically reaches few responders (the querier's 1-hop neighborhood) — heavy spread
@@ -1026,6 +1039,14 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.route_cache_ttl_secs = 1800;   // 30 min default
   _prefs.path_query_enabled = 1;        // Phase 2: cold-start fix on by default
   _prefs.path_query_timeout_ms = 2000;  // Phase 2: PATH_OFFER collection window (covers worst-case multi-responder jitter ~1.6s)
+
+  // Phase 2 routing telemetry counters
+  _rt_n_neighbor_rpc_recv = 0;
+  _rt_n_path_req_recv = 0;
+  _rt_n_path_req_disable_fwd = 0;
+  _rt_n_path_req_rate_limited = 0;
+  _rt_n_path_req_no_route = 0;
+  _rt_n_path_req_offered = 0;
 
   memset(default_scope.key, 0, sizeof(default_scope.key));
 }
@@ -1244,6 +1265,24 @@ void MyMesh::formatRoutesReply(char *reply) {
   }
 }
 
+void MyMesh::formatRoutingStatsReply(char *reply) {
+  if (!reply) return;
+  // Single-line key=value format — easy to parse from logs/sims, fits the small CLI reply buffer.
+  // 'rpc'   = total inbound CTL_TYPE_NEIGHBOR_RPC packets
+  // 'pr'    = PATH_REQ accepted into the handler (passed disable_fwd + rate-limit)
+  // 'df'    = PATH_REQ dropped because _prefs.disable_fwd
+  // 'rl'    = PATH_REQ dropped by path_req_limiter
+  // 'nr'    = PATH_REQ accepted but RouteCache had no entry for target
+  // 'po'    = PATH_OFFER actually emitted
+  snprintf(reply, 160, "routing: rpc=%u pr=%u df=%u rl=%u nr=%u po=%u",
+           (unsigned)_rt_n_neighbor_rpc_recv,
+           (unsigned)_rt_n_path_req_recv,
+           (unsigned)_rt_n_path_req_disable_fwd,
+           (unsigned)_rt_n_path_req_rate_limited,
+           (unsigned)_rt_n_path_req_no_route,
+           (unsigned)_rt_n_path_req_offered);
+}
+
 void MyMesh::removeNeighbor(const uint8_t *pubkey, int key_len) {
 #if MAX_NEIGHBOURS
   for (int i = 0; i < MAX_NEIGHBOURS; i++) {
@@ -1304,6 +1343,13 @@ void MyMesh::clearStats() {
   radio_driver.resetStats();
   resetStats();
   ((SimpleMeshTables *)getTables())->resetStats();
+  // Phase 2 routing telemetry — reset alongside other stats so 'clear stats' wipes everything.
+  _rt_n_neighbor_rpc_recv = 0;
+  _rt_n_path_req_recv = 0;
+  _rt_n_path_req_disable_fwd = 0;
+  _rt_n_path_req_rate_limited = 0;
+  _rt_n_path_req_no_route = 0;
+  _rt_n_path_req_offered = 0;
 }
 
 void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply) {

@@ -1065,6 +1065,7 @@ bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* 
 
   // Emit the PATH_REQ as a zero-hop control packet (default delay=0).
   sendZeroHop(req_pkt);
+  _rt_n_path_query_sent++;
   return true;   // caller should NOT also send pkt; we own it now
 }
 
@@ -1086,6 +1087,8 @@ void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
   if ((uint16_t)NEIGHBOR_RPC_HEADER_SIZE + payload_len > packet->payload_len) return;
   if (payload_len < PATH_OFFER_PAYLOAD_MIN) return;
 
+  _rt_n_path_offer_recv++;
+
   // OFFER payload
   const uint8_t* rpc_payload = &packet->payload[NEIGHBOR_RPC_HEADER_SIZE];
   uint8_t target_hash = rpc_payload[0];
@@ -1099,7 +1102,10 @@ void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
 
   // Match pending query — recipient_hash already validated above, so pass our own hash
   PendingQuery* p = matchPending(self_id.pub_key[0], query_id, target_hash);
-  if (p == nullptr) return;   // query already resolved or never existed
+  if (p == nullptr) {
+    _rt_n_path_offer_unmatched++;
+    return;   // query already resolved or never existed
+  }
 
   // Score: combine remote score with our local link quality to the responder.
   // Same formula shape as RouteCache::computeScore; recompute since we only have raw fields.
@@ -1137,6 +1143,7 @@ void BaseChatMesh::checkPendingQueries() {
       if (p.deferred_pkt != nullptr) {
         releasePacket(p.deferred_pkt);
       }
+      _rt_n_path_query_resolved_drop++;
       p.in_use = false;
       p.deferred_pkt = nullptr;
       continue;
@@ -1163,12 +1170,41 @@ void BaseChatMesh::checkPendingQueries() {
 
       // Send the deferred packet via the new direct path
       sendDirect(p.deferred_pkt, contact.out_path, contact.out_path_len);
+      _rt_n_path_query_resolved_direct++;
     } else {
       // No offer received - fall through to today's behavior: flood.
       sendFloodScoped(contact, p.deferred_pkt);
+      _rt_n_path_query_resolved_flood++;
     }
 
     p.in_use = false;
     p.deferred_pkt = nullptr;
   }
+}
+
+void BaseChatMesh::formatRoutingStatsReplyBase(char* reply, size_t cap) {
+  // Single-line key=value format — easy to parse from logs/sims, fits the small CLI reply buffer.
+  // 'sent'  = PATH_REQ emitted by tryQueryThenSend (cold-start fix activations)
+  // 'orcv'  = PATH_OFFER inbound (matched OR unmatched)
+  // 'oun'   =   of which: no PendingQuery slot matched (debugging signal — late offer or wrong query_id)
+  // 'rdir'  = pending → installed offer path → sendDirect
+  // 'rfld'  = pending → no offer arrived → sendFloodScoped fallback
+  // 'rdrop' = pending → contact disappeared, deferred packet dropped
+  if (!reply || cap == 0) return;
+  snprintf(reply, cap, "routing: sent=%u orcv=%u oun=%u rdir=%u rfld=%u rdrop=%u",
+           (unsigned)_rt_n_path_query_sent,
+           (unsigned)_rt_n_path_offer_recv,
+           (unsigned)_rt_n_path_offer_unmatched,
+           (unsigned)_rt_n_path_query_resolved_direct,
+           (unsigned)_rt_n_path_query_resolved_flood,
+           (unsigned)_rt_n_path_query_resolved_drop);
+}
+
+void BaseChatMesh::resetRoutingStats() {
+  _rt_n_path_query_sent = 0;
+  _rt_n_path_offer_recv = 0;
+  _rt_n_path_offer_unmatched = 0;
+  _rt_n_path_query_resolved_direct = 0;
+  _rt_n_path_query_resolved_flood = 0;
+  _rt_n_path_query_resolved_drop = 0;
 }

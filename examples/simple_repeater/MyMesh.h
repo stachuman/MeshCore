@@ -105,6 +105,14 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   bool region_load_active;
   unsigned long dirty_contacts_expiry;
   RouteCache route_cache;
+  // Phase 2 routing telemetry — drives tuning decisions (timeout, jitter, gates).
+  // See PathProtocol.h for the universal RPC envelope these counters cover.
+  uint32_t _rt_n_neighbor_rpc_recv;     // all inbound CTL_TYPE_NEIGHBOR_RPC packets
+  uint32_t _rt_n_path_req_recv;         //   of which: PATH_REQ ops we accepted into the handler
+  uint32_t _rt_n_path_req_disable_fwd;  //     dropped because _prefs.disable_fwd
+  uint32_t _rt_n_path_req_rate_limited; //     dropped by path_req_limiter
+  uint32_t _rt_n_path_req_no_route;     //     dropped: RouteCache had no entry for target
+  uint32_t _rt_n_path_req_offered;      //     PATH_OFFER actually emitted
 #if MAX_NEIGHBOURS
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -213,6 +221,7 @@ public:
   void setTxPower(int8_t power_dbm) override;
   void formatNeighborsReply(char *reply) override;
   void formatRoutesReply(char *reply) override;
+  void formatRoutingStatsReply(char *reply) override;
   void removeNeighbor(const uint8_t* pubkey, int key_len) override;
   void formatStatsReply(char *reply) override;
   void formatRadioStatsReply(char *reply) override;
