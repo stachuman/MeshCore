@@ -90,17 +90,13 @@ int RouteCache::lookup(const uint8_t* target_hash, uint8_t target_hash_size,
   // to the wrong destination (silent message loss). Refuse to answer; the caller
   // will fall through to flood, which uses the real network paths.
   //
-  // Caveat: legitimate multi-path entries (same dest_pubkey, different path bytes)
-  // are NOT ambiguous — distinctness is by full 32-byte dest_pubkey comparison.
-  //
   // The PATH_REQ_FLAG_FULL_TARGET protocol mechanism lets a future caller pass
-  // the full 32-byte pubkey when it really needs disambiguation; the responder
-  // can then exact-match before answering. Phase 2 callers don't use it yet.
+  // the full 32-byte pubkey if required in future
   if (n_cand >= 2) {
     const uint8_t* first_dest = _entries[candidates[0]].dest_pubkey;
     for (int k = 1; k < n_cand; k++) {
       if (memcmp(first_dest, _entries[candidates[k]].dest_pubkey, PUB_KEY_SIZE) != 0) {
-        return 0;  // ambiguous — stay silent
+        return 0;  // ambiguous — stay silent, no clear answer
       }
     }
   }

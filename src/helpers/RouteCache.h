@@ -1,8 +1,6 @@
 #pragma once
 
-// Reverse-route table populated from observed flood traffic at repeaters.
-// See docs/superpowers/specs/2026-04-29-meshcore-routing-design.md §5.1.
-//
+// Reverse-route table populated from observed flood traffic at repeaters
 // Host-test compatible: no Arduino includes. Constants come from MeshCore.h.
 
 #include <stdint.h>
@@ -39,8 +37,8 @@ public:
   // Observation hook. Inserts or refreshes the entry for (dest_pubkey, path).
   // - path is the path THIS NODE would use to reach dest (i.e., reversed wire path).
   // - hop_count is the COUNT of hashes in path[] (each hash is `hash_size` bytes wide).
-  // - hash_size is bytes-per-hash (1, 2, or 3) matching the deployment's
-  //   path_hash_mode + 1. Stored on the entry; lookups must filter by it.
+  // - hash_size is bytes-per-hash (1, 2, or 3) matching the deployment
+  //   path_hash_mode + 1.
   // - snr_x4 is int16_t to accommodate the full LoRa SNR range (~-20..+60 dB);
   //   int8_t would overflow on strong links (e.g. 50 dB → snr_x4=200 wraps to -56).
   // Entries where (hop_count * hash_size) > ROUTE_CACHE_PATH_MAX are silently dropped.
@@ -57,8 +55,7 @@ public:
   //
   // Returns up to max_results entries sorted by score descending. Returns count
   // actually written. Returns 0 if the candidate set after filtering covers
-  // multiple distinct dest_pubkey values (hash-prefix ambiguity gate — see
-  // implementation comment for rationale).
+  // multiple distinct dest_pubkey values
   int lookup(const uint8_t* target_hash, uint8_t target_hash_size,
              uint8_t path_hash_size,
              const uint8_t* exclude_path, uint8_t exclude_path_size_bytes,

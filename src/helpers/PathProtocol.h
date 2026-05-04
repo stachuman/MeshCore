@@ -5,17 +5,16 @@
 // PAYLOAD_TYPE_CONTROL (0x0B), zero-hop, subtype CTL_TYPE_NEIGHBOR_RPC = 0xC0.
 //
 // This subtype is the generic 1-hop RPC framework between MeshCore nodes
-// (router-to-router, router-to-companion, companion-to-companion). Phase 2
-// of the routing work introduces it for path-discovery (PATH_REQ / PATH_OFFER);
+// (router-to-router, router-to-companion, companion-to-companion). 
 // future neighbor protocols — route gossip, congestion announcements, neighbor
-// stats, time-slot negotiation, etc. — MUST add new `rpc_op` sub-command values
+// stats, time-slot negotiation... — MUST add new `rpc_op` sub-command values
 // rather than allocate fresh CTL_TYPE_* subtypes. Treat the rpc_op space as the
 // stable, evolution-friendly extension point.
 //
 // === Subtype byte layout ===
 //
 //   bits 7..4 : 0xC = CTL_TYPE_NEIGHBOR_RPC (high nibble fixed; high bit 0x80
-//               set so MeshCore's existing zero-hop CONTROL gate at Mesh.cpp:67
+//               set so MeshCore's existing zero-hop CONTROL gate at Mesh.cpp
 //               picks it up).
 //   bits 3..2 : hash_size_minus_1 — 0 = 1-byte hashes, 1 = 2 bytes, 2 = 3 bytes.
 //               Sets the on-wire size of sender_hash AND of the path bytes
@@ -25,7 +24,7 @@
 //               size on its OFFER.
 //   bits 1..0 : rpc-op-specific flags (e.g., PATH_REQ_FLAG_FULL_TARGET = 0x01).
 //
-// === Wire format (PAYLOAD_TYPE_CONTROL payload, sent via Mesh::sendZeroHop) ===
+// Wire format (PAYLOAD_TYPE_CONTROL payload, sent via Mesh::sendZeroHop)
 //
 //   byte 0     subtype           see above
 //   byte 1..H  sender_hash       H bytes (H = ((subtype >> 2) & 0x03) + 1)
@@ -43,7 +42,7 @@
 // parse the envelope (size derivable from subtype) and skip the body cleanly.
 //
 // rpc_op space conventions:
-//   0x01..0x7F   feature ops (path-discovery, route gossip, neighbor stats, ...)
+//   0x01..0x7F   feature ops (path-discovery, routing commands)
 //   0x80..0xFF   reserved for protocol version bumps if framing ever needs to evolve
 
 #include <stdint.h>
@@ -86,7 +85,7 @@ static inline uint8_t neighbor_rpc_header_size(uint8_t hash_size) {
 // === rpc_op sub-command catalog ===
 #define RPC_OP_PATH_REQ     0x01    // querier asks 1-hop neighborhood for a route to target
 #define RPC_OP_PATH_OFFER   0x02    // responder answers with cached route from RouteCache
-// 0x03..0x7F reserved for future neighbor RPCs
+// 0x03..0x7F reserved for future neighbor commands - 1-hop
 
 // === RPC_OP_PATH_REQ flags (low 2 bits of subtype) ===
 #define PATH_REQ_FLAG_FULL_TARGET           0x01   // payload includes 32-byte full pubkey for hash-collision disambig

@@ -986,11 +986,11 @@ void BaseChatMesh::loop() {
     _pendingLoopback = NULL;
   }
 
-  // Phase 2 cold-start fix: resolve any pending PATH_REQ queries whose deadline expired.
+  // Cold-start fix: resolve any pending PATH_REQ queries whose deadline expired.
   checkPendingQueries();
 }
 
-// === Phase 2 cold-start fix: pending PATH_REQ tracking ===
+// Cold-start fix: pending PATH_REQ tracking
 
 BaseChatMesh::PendingQuery* BaseChatMesh::findPendingSlot() {
   for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
@@ -1001,7 +1001,7 @@ BaseChatMesh::PendingQuery* BaseChatMesh::findPendingSlot() {
 
 BaseChatMesh::PendingQuery* BaseChatMesh::matchPending(uint8_t query_id,
                                                        const uint8_t* target_hash) {
-  // target_hash is PATH_REQ_TARGET_HASH_SIZE (4) bytes — matches what we sent on the wire.
+  // target_hash is PATH_REQ_TARGET_HASH_SIZE (4) bytes — matches what we sent on the wire
   for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
     PendingQuery& p = _pending_queries[i];
     if (!p.in_use) continue;
@@ -1015,7 +1015,7 @@ BaseChatMesh::PendingQuery* BaseChatMesh::matchPending(uint8_t query_id,
 bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* pkt,
                                      uint32_t expected_ack) {
   // Caller passes a packet built for sendDirect once we have a path. We hold it here
-  // until the query resolves (offer arrives or deadline passes).
+  // until the query resolves (offer arrives or deadline passes)
   PendingQuery* slot = findPendingSlot();
   if (slot == nullptr) {
     return false;  // table full; caller falls through to flood (today's behavior)
@@ -1036,7 +1036,7 @@ bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* 
   uint8_t qid = (uint8_t)getRNG()->nextInt(1, 256);   // 1..255 (avoid 0 as sentinel)
   uint8_t req[NEIGHBOR_RPC_HEADER_MAX_SIZE + PATH_REQ_PAYLOAD_MIN];
   int j = 0;
-  req[j++] = neighbor_rpc_subtype(hash_size, /*op_flags*/ 0);  // no flags (no full_target in v1)
+  req[j++] = neighbor_rpc_subtype(hash_size, /*op_flags*/ 0);  // no flags
   // sender_hash = querier's first hash_size pubkey bytes
   memcpy(&req[j], self_id.pub_key, hash_size); j += hash_size;
   req[j++] = NEIGHBOR_RPC_BROADCAST_HASH;      // recipient_hash = unaddressed (any neighbor may answer)
@@ -1045,7 +1045,7 @@ bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* 
   req[j++] = PATH_REQ_PAYLOAD_MIN;             // payload_len = 5 (target_hash[4] + exclude_count[1])
   // payload:
   memcpy(&req[j], recipient.id.pub_key, PATH_REQ_TARGET_HASH_SIZE); j += PATH_REQ_TARGET_HASH_SIZE;
-  req[j++] = 0;                                // exclude_count = 0 (Phase 2 v1 — no breakage retry yet)
+  req[j++] = 0;                                // exclude_count = 0
 
   mesh::Packet* req_pkt = createControlData(req, j);
   if (req_pkt == nullptr) {
@@ -1065,15 +1065,15 @@ bool BaseChatMesh::tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* 
   slot->pending_expected_ack = expected_ack;
   slot->deadline_millis = futureMillis(_path_query_timeout_ms_for_send());
 
-  // Emit the PATH_REQ as a zero-hop control packet (default delay=0).
+  // Emit the PATH_REQ as a zero-hop control packet (default delay=0)
   sendZeroHop(req_pkt);
   _rt_n_path_query_sent++;
   return true;   // caller should NOT also send pkt; we own it now
 }
 
 void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
-  // Parse a CTL_TYPE_NEIGHBOR_RPC packet carrying RPC_OP_PATH_OFFER.
-  // See PathProtocol.h for the universal envelope layout (variable header per hash_size).
+  // Parse a CTL_TYPE_NEIGHBOR_RPC packet carrying RPC_OP_PATH_OFFER
+  // See PathProtocol.h for the universal envelope layout (variable header per hash_size)
   if (packet->payload_len < NEIGHBOR_RPC_HEADER_MIN_SIZE) return;
   if ((packet->payload[0] & NEIGHBOR_RPC_SUBTYPE_HIGH_NIBBLE) != CTL_TYPE_NEIGHBOR_RPC) return;
 
@@ -1090,7 +1090,7 @@ void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
 
   if (rpc_op != RPC_OP_PATH_OFFER) return;
   // Edge: if our pub_key[0] == 0x00 (== NEIGHBOR_RPC_BROADCAST_HASH), any broadcast also
-  // matches as "addressed to us" — harmless 1/256 alias since query_id still gates matchPending.
+  // matches as "addressed to us" — harmless 1/256 alias since query_id still gates matchPending
   if (recipient_hash != self_id.pub_key[0]) return;   // not addressed to us
   if ((uint16_t)header_size + payload_len > packet->payload_len) return;
   if (payload_len < PATH_OFFER_PAYLOAD_MIN) return;
@@ -1124,8 +1124,8 @@ void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
     return;
   }
 
-  // Score: combine remote score with our local link quality to the responder.
-  // Same formula shape as RouteCache::computeScore; recompute since we only have raw fields.
+  // Score: combine remote score with our local link quality to the responder
+  // Same formula shape as RouteCache::computeScore; recompute since we only have raw fields
   int32_t snr_term = ((int32_t)last_snr_x4 / 4) + 20;
   if (snr_term < 0) snr_term = 0; if (snr_term > 60) snr_term = 60;
   int32_t fresh_term = 60 - (int32_t)(age_secs / 60);
@@ -1140,8 +1140,8 @@ void BaseChatMesh::onPathOfferRecv(mesh::Packet* packet) {
 
   if ((int16_t)score > p->best_score) {
     p->best_score = (int16_t)score;
-    // Responder's sender_hash becomes the first hop in the source-route we build later.
-    // Width = offer_hash_size (== query_hash_size, asserted above).
+    // Responder's sender_hash becomes the first hop in the source-route we build later
+    // Width = offer_hash_size (== query_hash_size, asserted above)
     memcpy(p->best_responder_hash, sender_hash, offer_hash_size);
     p->best_path_len = hop_count;
     if (path_bytes > 0) {
@@ -1183,11 +1183,7 @@ void BaseChatMesh::checkPendingQueries() {
       if (off_path_bytes > 0) {
         memcpy(&full_path[hs], p.best_path, off_path_bytes);
       }
-      // Important: `path_len` throughout MeshCore (sendDirect / copyPath / writePath) is the
-      // wire-encoded path-length byte — upper 2 bits = hash_size_minus_1, lower 6 = hop_count —
-      // NOT the raw byte count. Encode it here so the path is transmitted at the correct
-      // hash_size; otherwise receivers parse the bytes as 1-byte hashes (since the upper bits
-      // would be zero) and the route becomes unrecognizable.
+      
       uint8_t full_hop_count = (uint8_t)(1 + p.best_path_len);  // responder + offered hops
       uint8_t full_path_len = (uint8_t)(((hs - 1) << 6) | (full_hop_count & 0x3F));
 

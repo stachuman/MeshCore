@@ -763,7 +763,7 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
-  // Phase 2 universal inter-router/companion RPC envelope (CTL_TYPE_NEIGHBOR_RPC = 0xC0).
+  // Universal inter router/companion RPC envelope (CTL_TYPE_NEIGHBOR_RPC = 0xC0).
   // Consume PATH_OFFER (and any future neighbor RPCs we recognize) locally before
   // falling through to the existing PUSH_CODE_CONTROL_DATA forwarding to the app.
   // See PathProtocol.h for the framework rationale.
@@ -778,7 +778,7 @@ void MyMesh::onControlDataRecv(mesh::Packet *packet) {
       onPathOfferRecv(packet);
       return;
     }
-    // Future RPCs handled here. Unknown rpc_op => drop silently (forward-compat).
+    // Future RPCs handled here. Unknown rpc_op => drop silently (forward-compat) - more to come later...
     return;
   }
 
@@ -888,8 +888,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.tx_power_dbm = LORA_TX_POWER;
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
-  _prefs.path_query_enabled = 1;        // Phase 2: cold-start fix on by default
-  _prefs.path_query_timeout_ms = 2000;  // Phase 2: PATH_OFFER collection window (covers worst-case multi-responder jitter ~1.6s)
+  _prefs.path_query_enabled = 1;        // Cold-start fix on by default
+  _prefs.path_query_timeout_ms = 2000;  // PATH_OFFER collection window (covers worst-case multi-responder jitter ~1.6s)
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
 #if defined(USE_SX1262) || defined(USE_SX1268)
 #ifdef SX126X_RX_BOOSTED_GAIN

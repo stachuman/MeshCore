@@ -72,8 +72,7 @@ class BaseChatMesh : public mesh::Mesh {
   uint8_t temp_buf[MAX_TRANS_UNIT];
   ConnectionInfo connections[MAX_CONNECTIONS];
 
-  // Phase 2 cold-start fix: in-flight PATH_REQ tracking (zero-hop neighborhood query).
-  // See spec §7.6 (with responder_hash addition).
+  // Cold-start fix: in-flight PATH_REQ tracking (zero-hop neighborhood query).
   static const int MAX_PENDING_QUERIES = 2;
   struct PendingQuery {
     bool     in_use;
@@ -92,7 +91,7 @@ class BaseChatMesh : public mesh::Mesh {
   };
   PendingQuery _pending_queries[MAX_PENDING_QUERIES];
 
-  // Phase 2 routing telemetry — drives tuning decisions (timeout, jitter, gates).
+  // routing telemetry — drives tuning decisions (timeout, jitter, gates).
   // See PathProtocol.h for the universal RPC envelope these counters cover.
   uint32_t _rt_n_path_query_sent;            // tryQueryThenSend emitted a PATH_REQ
   uint32_t _rt_n_path_offer_recv;            // PATH_OFFER inbound (matched OR unmatched)
@@ -157,7 +156,7 @@ protected:
   virtual void sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis=0);
   virtual void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0);
 
-  // Phase 2 cold-start fix helpers
+  // cold-start fix helpers
   bool tryQueryThenSend(const ContactInfo& recipient, mesh::Packet* pkt,
                          uint32_t expected_ack);
   void onPathOfferRecv(mesh::Packet* packet);
@@ -165,16 +164,16 @@ protected:
   PendingQuery* findPendingSlot();
   PendingQuery* matchPending(uint8_t query_id, const uint8_t* target_hash);
 
-  // Subclasses override to surface NodePrefs.path_query_timeout_ms.
+  // Subclasses override to surface NodePrefs.path_query_timeout_ms
   // Non-const because subclasses may compute the timeout from the radio's airtime
-  // estimate (Radio::getEstAirtimeFor is non-const).
+  // estimate (Radio::getEstAirtimeFor is non-const)
   virtual uint16_t _path_query_timeout_ms_for_send() { return 500; }
 
-  // Subclasses override to surface NodePrefs.path_query_enabled.
+  // Subclasses override to surface NodePrefs.path_query_enabled
   virtual bool _path_query_enabled_for_send() const { return false; }
 
-  // Subclasses override to surface NodePrefs.path_hash_mode (0..2 → 1..3-byte hashes).
-  // Default 0 = 1-byte hashes for nodes that don't track this preference.
+  // Subclasses override to surface NodePrefs.path_hash_mode (0..2 → 1..3-byte hashes)
+  // Default 0 = 1-byte hashes 
   virtual uint8_t _path_hash_mode_for_send() const { return 0; }
 
   // storage concepts, for sub-classes to override/implement
@@ -202,8 +201,8 @@ protected:
   void checkConnections();
 
 public:
-  // Phase 2 routing telemetry — populates the routing counters; subclasses (or the orchestrator)
-  // surface via CLI. Single-line "key=value" format chosen for log-parseability and small CLI buffers.
+  // Routing telemetry — populates the routing counters; subclasses (or the orchestrator)
+  // surface via CLI
   void formatRoutingStatsReplyBase(char* reply, size_t cap);
   void resetRoutingStats();
 

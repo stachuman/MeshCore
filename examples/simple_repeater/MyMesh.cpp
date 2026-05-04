@@ -635,9 +635,9 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
                           const uint8_t *app_data, size_t app_data_len) {
   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
 
-  // RouteCache update (Phase 1): the wire path is the trail of forwarders from origin to here.
-  // Reverse it for storage so it can be used as a SOURCE-ROUTE to the origin from here.
-  // Reversal operates on whole hashes (groups of hash_size bytes), not individual bytes.
+  // RouteCache update - the wire path is the trail of forwarders from origin to here
+  // Reverse it for storage so it can be used as a SOURCE-ROUTE to the origin from here
+  // Reversal operates on whole hashes
   uint8_t hop_count = packet->getPathHashCount();
   uint8_t hash_size = packet->getPathHashSize();
   if (hash_size >= 1 && hash_size <= 3
@@ -843,12 +843,12 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
     putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
   } else if (type == CTL_TYPE_NEIGHBOR_RPC
              && packet->payload_len >= NEIGHBOR_RPC_HEADER_MIN_SIZE) {
-    // --- BEGIN CTL_TYPE_NEIGHBOR_RPC dispatcher (Phase 2 — universal inter-router/companion RPC) ---
+    // CTL_TYPE_NEIGHBOR_RPC dispatcher (universal inter-router/companion RPC)
     // The high nibble of the subtype is fixed at 0xC; bits 3..2 carry hash_size_minus_1
     // (so the actual subtype byte is one of 0xC0/0xC4/0xC8 plus low op-flags). Parse
     // the variable-size common header from there. See PathProtocol.h for the framework
     // rationale: future neighbor protocols add new rpc_op values rather than burn fresh
-    // CTL_TYPE_* slots.
+    // CTL_TYPE_* slots
     uint8_t subtype_byte    = packet->payload[0];
     uint8_t req_hash_size   = neighbor_rpc_hash_size(subtype_byte);   // 1, 2, or 3
     uint8_t header_size     = neighbor_rpc_header_size(req_hash_size); // 6, 7, or 8
@@ -1070,10 +1070,10 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   pending_discover_until = 0;
 
   _prefs.route_cache_ttl_secs = 1800;   // 30 min default
-  _prefs.path_query_enabled = 1;        // Phase 2: cold-start fix on by default
-  _prefs.path_query_timeout_ms = 2000;  // Phase 2: PATH_OFFER collection window (covers worst-case multi-responder jitter ~1.6s)
+  _prefs.path_query_enabled = 1;        // Cold-start fix on by default
+  _prefs.path_query_timeout_ms = 2000;  // PATH_OFFER collection window (covers worst-case multi-responder jitter ~1.6s)
 
-  // Phase 2 routing telemetry counters
+  // routing telemetry counters
   _rt_n_neighbor_rpc_recv = 0;
   _rt_n_path_req_recv = 0;
   _rt_n_path_req_disable_fwd = 0;
@@ -1376,7 +1376,7 @@ void MyMesh::clearStats() {
   radio_driver.resetStats();
   resetStats();
   ((SimpleMeshTables *)getTables())->resetStats();
-  // Phase 2 routing telemetry — reset alongside other stats so 'clear stats' wipes everything.
+  // Routing telemetry — reset alongside other stats so 'clear stats' wipes everything.
   _rt_n_neighbor_rpc_recv = 0;
   _rt_n_path_req_recv = 0;
   _rt_n_path_req_disable_fwd = 0;
